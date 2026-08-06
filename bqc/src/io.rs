@@ -772,11 +772,13 @@ mod tests {
         assert_eq!(first.parent(), Some(directory.path()));
         assert_eq!(second.parent(), Some(directory.path()));
         assert_ne!(first, second);
-        assert!(first
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with(".clean.cbq.bqc-tmp-"));
+        assert!(
+            first
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".clean.cbq.bqc-tmp-")
+        );
         assert!(create_temp(Path::new("/")).is_err());
     }
 

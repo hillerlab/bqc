@@ -41,9 +41,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::overlap::{bases_disagree, complement, Overlap};
+use crate::overlap::{Overlap, bases_disagree, complement};
 use crate::process::Mate;
-use crate::read::{phred, ReadView};
+use crate::read::{ReadView, phred};
 
 /// How much detail the correction log records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, clap::ValueEnum)]
@@ -328,7 +328,7 @@ pub fn plan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::overlap::{find_overlap, tests::revcomp, OverlapParams};
+    use crate::overlap::{OverlapParams, find_overlap, tests::revcomp};
 
     /// A quality string from Phred scores.
     fn quality(scores: &[u8]) -> Vec<u8> {
@@ -369,20 +369,24 @@ mod tests {
     #[test]
     fn validation_requires_a_donor_above_the_recipient() {
         assert!(stage().validate().is_ok());
-        assert!(CorrectionStage {
-            donor_quality: 20,
-            recipient_quality: 20,
-            ..stage()
-        }
-        .validate()
-        .is_err());
-        assert!(CorrectionStage {
-            donor_quality: 10,
-            recipient_quality: 20,
-            ..stage()
-        }
-        .validate()
-        .is_err());
+        assert!(
+            CorrectionStage {
+                donor_quality: 20,
+                recipient_quality: 20,
+                ..stage()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            CorrectionStage {
+                donor_quality: 10,
+                recipient_quality: 20,
+                ..stage()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

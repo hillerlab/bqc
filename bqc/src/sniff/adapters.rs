@@ -191,7 +191,10 @@ impl AdapterSniff {
     #[must_use]
     pub fn decision(&self) -> Decision {
         let mates = std::iter::once(&self.r1).chain(self.r2.as_ref());
-        mates.map(|mate| mate.decision).max().unwrap_or(Decision::Confident)
+        mates
+            .map(|mate| mate.decision)
+            .max()
+            .unwrap_or(Decision::Confident)
     }
 
     /// Mates whose recommendation can be written into a configuration file.

@@ -27,7 +27,7 @@
 //! base, which is a property of the data rather than of any one caller.
 
 use crate::adapter::{
-    find_three_prime, indel_best_at, indel_improves, verify_at, Adapter, AdapterHit, AdapterParams,
+    Adapter, AdapterHit, AdapterParams, find_three_prime, indel_best_at, indel_improves, verify_at,
 };
 
 /// Version of the built-in known-adapter library.
