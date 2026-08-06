@@ -1,0 +1,73 @@
+[package]
+name = "bqc"
+version = "0.0.1"
+edition = "2024"
+description = "CBQ-native all-in-one quality control tool"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/hillerlab/bqc"
+keywords = ["bioinformatics", "sequencing", "fastq", "binseq", "trimming"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+# Set by the Salmon crates, which all declare 1.91.
+rust-version = "1.91"
+
+[features]
+default = []
+# `bqc sniff strand`. Opt-in: the Salmon mapper pulls in roughly 330 crates
+# and needs a C compiler, which is a large cost to impose on every build for one
+# subcommand. This gates optional compilation, not a choice of backend — there
+# is one implementation, and no subprocess or FASTQ fallback exists.
+sniff-strand = [
+    "dep:piscem-rs",
+    "dep:salmon-core",
+    "dep:salmon-index",
+    "dep:salmon-map",
+    "dep:salmon-model",
+    "dep:wide",
+]
+
+[dependencies]
+# `paraseq` (FASTX support) is not needed: bqc is CBQ-only. The `anyhow`
+# feature is required because binseq 0.9.4 uses it unconditionally internally.
+binseq = { version = "0.9.4", default-features = false, features = ["anyhow"] }
+bitflags = { version = "2.9", features = ["serde"] }
+
+# The Salmon Rust port, pinned exactly. These crates are one closely coupled
+# API and on-disk index format, so they move as a set: upgrade them together and
+# rerun the differential tests. `piscem-rs` is a *direct* dependency because
+# `salmon-map`'s entry points take its `ReferenceIndex` and `HitSearcher` by
+# reference and re-export neither, so there is no way to name them otherwise.
+piscem-rs = { version = "=0.6.4", optional = true }
+salmon-core = { version = "=2.4.1", optional = true }
+salmon-index = { version = "=2.4.1", optional = true }
+salmon-map = { version = "=2.4.1", optional = true }
+salmon-model = { version = "=2.4.1", optional = true }
+
+# Compatibility pin, not a dependency we use. `salmon-index` reaches `wide`
+# through cf1-rs -> simd-minimizers -> seq-hash -> packed-seq, and `wide 1.6.0`
+# makes `seq-hash 0.2.0` fail to compile with a trait-resolution overflow
+# (E0275: `u32x8: Shr<&_>`) — reproducible standalone, with nothing of bqc
+# involved. Salmon 2.4.1 was released and locked against `wide 1.5.0`, and
+# `packed-seq` asks for `^1.5`, so this simply reproduces Salmon's own tested
+# graph rather than inventing a patch. Ordinary unlocked resolution would
+# otherwise pick 1.6.0. Remove once `seq-hash` builds against 1.6.
+wide = { version = "=1.5.0", optional = true }
+clap = { version = "4.6", features = ["derive"] }
+memmap2 = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.9"
+zstd = "0.13"
+
+[dev-dependencies]
+proptest = "1.8"
+tempfile = "3.24"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+struct_excessive_bools = "allow"

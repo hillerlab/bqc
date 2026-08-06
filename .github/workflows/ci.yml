@@ -1,0 +1,226 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+defaults:
+  run:
+    working-directory: bqc
+
+jobs:
+  # Formatting, lints, docs and the full test suite on x86_64.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bqc -> target"
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
+      # `sniff-strand` is off by default, so this is the build most users get
+      # and it must stay green on its own.
+      - run: cargo test --no-default-features
+      - run: cargo doc --no-deps --all-features
+
+  # The Salmon integration is version-locked on purpose: the mapping API and the
+  # on-disk index format move together, and `wide` is pinned to the version
+  # Salmon 2.4.1 itself locked (see the manifest). A loosened pin here is a build
+  # failure waiting to happen, so it is checked rather than trusted.
+  pinned-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bqc -> target"
+      - name: Salmon crates and the wide pin are exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail=0
+          for crate in salmon-core salmon-index salmon-map salmon-model; do
+            grep -q "^$crate = { version = \"=2.4.1\"" Cargo.toml \
+              || { echo "::error::$crate is not pinned to =2.4.1"; fail=1; }
+          done
+          grep -q '^piscem-rs = { version = "=0.6.4"' Cargo.toml \
+            || { echo "::error::piscem-rs is not pinned to =0.6.4"; fail=1; }
+          grep -q '^wide = { version = "=1.5.0"' Cargo.toml \
+            || { echo "::error::the wide compatibility pin is missing"; fail=1; }
+          exit $fail
+      - name: The strand feature builds and its resolved graph is the locked one
+        run: cargo build --features sniff-strand
+      - name: wide resolved to the pinned version
+        shell: bash
+        run: |
+          set -euo pipefail
+          resolved=$(cargo tree --features sniff-strand -i wide --depth 0 | head -1)
+          echo "$resolved"
+          [[ "$resolved" == *"wide v1.5.0"* ]] || {
+            echo "::error::wide resolved to $resolved, not 1.5.0"; exit 1; }
+
+  # Release-mode integration tests: the ordered engine, zstd and the memory map
+  # behave differently under optimisation, and the property tests are far more
+  # thorough when they are not 30x slower.
+  release-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bqc -> target"
+      - run: cargo test --release
+
+  # aarch64 has no hand-written intrinsics to exercise (see PROFILE.md), but the
+  # portable code must build and pass there.
+  aarch64:
+    runs-on: ubuntu-24.04-arm
+    continue-on-error: true # drop once ARM runners are reliably available
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bqc -> target"
+      - run: cargo test --release
+
+  # Output must not depend on the thread count, on real multi-block files.
+  determinism:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bqc -> target"
+      - name: Build
+        run: cargo build --release --bins --examples
+      - name: Generate fixtures
+        run: cargo run --release --example make_fixtures -- fixtures
+      - name: Compare output across thread counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BQ=./target/release/bqc
+          R1=AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+          R2=AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT
+          fail=0
+          check() {
+            local name=$1; shift
+            for t in 1 3 8; do
+              "$@" -o "out-$name-$t.cbq" -T "$t" --force --quiet
+            done
+            for t in 3 8; do
+              if ! cmp -s "out-$name-1.cbq" "out-$name-$t.cbq"; then
+                echo "::error::$name differs between -T 1 and -T $t"
+                fail=1
+              fi
+            done
+            echo "ok: $name"
+          }
+          check workflow $BQ workflow fixtures/pe150.cbq \
+            --adapter-r1 $R1 --adapter-r2 $R2 --quality-tail 20 \
+            --trim-terminal-n --poly-g --poly-x --min-length 30 --max-n 5 \
+            --min-mean-quality 20 --min-complexity 0.3
+          check autodetect $BQ adapter fixtures/adapter-heavy.cbq --auto-detect
+          check indels $BQ adapter fixtures/indel.cbq --adapter-r1 $R1 --allow-indels
+          check overlap $BQ adapter fixtures/overlap.cbq --paired-overlap
+          check varlen $BQ workflow fixtures/varlen.cbq --adapter-r1 $R1 \
+            --quality-right 20 --min-length 20
+          check noqual $BQ adapter fixtures/noqual.cbq --adapter-r1 $R1
+          check noheader $BQ workflow fixtures/noheader.cbq --adapter-r1 $R1 \
+            --poly-x --min-length 30
+          check segment $BQ segment fixtures/se150.cbq --adapter-r1 $R1 \
+            --min-segment-length 10
+          check autodetect-pe $BQ workflow fixtures/pe150.cbq --auto-detect \
+            --min-length 25
+          exit $fail
+
+      # Sniffing writes a report rather than a CBQ, so it is compared through
+      # its JSON: the whole point of an arithmetic sample plan is that the
+      # answer cannot move with the thread count.
+      - name: Sniff reports are identical across thread counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BQ=./target/release/bqc
+          fail=0
+          for fixture in adapter-heavy unknown-adapter pe150 overlap; do
+            for t in 1 3 8; do
+              "$BQ" sniff adapters "fixtures/$fixture.cbq" --format json \
+                -T "$t" -o "sniff-$fixture-$t.json" --force
+            done
+            for t in 3 8; do
+              if ! cmp -s "sniff-$fixture-1.json" "sniff-$fixture-$t.json"; then
+                echo "::error::sniff $fixture differs between -T 1 and -T $t"
+                fail=1
+              fi
+            done
+            echo "ok: sniff $fixture"
+          done
+          exit $fail
+
+      # The detector has one implementation, so the reported recommendation and
+      # the sequence `--auto-detect` configures must be the same string.
+      - name: Sniffing and auto-detection agree
+        shell: bash
+        run: |
+          set -euo pipefail
+          BQ=./target/release/bqc
+          "$BQ" sniff adapters fixtures/pe150.cbq --format json -o sniffed.json --force
+          "$BQ" adapter fixtures/pe150.cbq -o trimmed.cbq \
+            --auto-detect --report detected.json --force --quiet
+          python3 - <<'PY'
+          import json, sys
+          sniffed = json.load(open("sniffed.json"))["result"]
+          detected = json.load(open("detected.json"))["adapter"]["detection"]
+          for mate in ("r1", "r2"):
+              a = sniffed[mate]["recommended_sequence"]
+              b = detected[mate]["recommended_sequence"]
+              assert a == b, f"{mate}: sniff said {a!r}, auto-detect used {b!r}"
+              assert a, f"{mate}: nothing was detected"
+          print("ok: both paths recommend the same adapters")
+          PY
+
+      # A non-destructive command must leave the file it inspected untouched.
+      - name: Sniffing does not modify its input
+        shell: bash
+        run: |
+          set -euo pipefail
+          BQ=./target/release/bqc
+          before=$(sha256sum fixtures/pe150.cbq | cut -d' ' -f1)
+          "$BQ" sniff adapters fixtures/pe150.cbq --format tsv -o sniffed.tsv --force
+          after=$(sha256sum fixtures/pe150.cbq | cut -d' ' -f1)
+          [ "$before" = "$after" ] || { echo "::error::sniff modified its input"; exit 1; }
+          echo "ok: input unchanged"
+
+  # Miri covers the pure algorithms only: the integration tests memory-map files
+  # and call zstd through FFI, neither of which Miri supports.
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bqc -> target"
+      # The span algebra and the pure kernels: `sniff::` is included because the
+      # sample plan and the block partition are exactly that kind of index
+      # arithmetic.
+      - run: |
+          cargo miri test --lib -- \
+            adapter:: trim:: filter:: read:: detect:: overlap:: segment:: \
+            linked:: correct:: sniff::
