@@ -103,4 +103,8 @@ FASTQ conversion, no intermediate files.
 
 ### Fixed
 
-- Nothing to fix — first release.
+- Fix `map(...).unwrap_or(...)` clippy lints in the report input metadata
+  (`src/report.rs`) and strand fold-back naming (`src/sniff/strand.rs`) by using
+  `Result::map_or`.
+- Collapse the canonical-base byte array into a byte-string literal
+  (`src/trim.rs`) to satisfy the `byte-char-slices` clippy lint.
