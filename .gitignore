@@ -1,0 +1,20 @@
+# Byte-compiled / optimized / DLL files
+*target/
+*.egg.info/
+*.ruff_cache/
+*__pycache__/
+*.venv/
+*test_config
+*test.config
+*.nextflow
+
+# Artifacts
+.DS_Store
+.idea/
+.claude/
+# Working notes, not shipped. `bqc/README.md` is the crate README and is
+# tracked: a blanket `bqc/*.md` also hid it from the published package.
+bqc/PROFILE.md
+bqc/SNIFF-AUDIT.md
+bench/data/
+bench/results/
