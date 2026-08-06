@@ -221,7 +221,8 @@ jobs:
       # The span algebra and the pure kernels: `sniff::` is included because the
       # sample plan and the block partition are exactly that kind of index
       # arithmetic.
+      # INFO: setting MIRIFLAGS=-Zmiri-disable-isolation is a workaround for mkdir
       - run: |
-          cargo miri test --lib -- \
+          MIRIFLAGS=-Zmiri-disable-isolation cargo miri test --lib -- \
             adapter:: trim:: filter:: read:: detect:: overlap:: segment:: \
             linked:: correct:: sniff::
