@@ -21,7 +21,7 @@
 use serde::Serialize;
 
 use crate::error::{Error, Result};
-use crate::read::{phred_sum, ReadView, Span};
+use crate::read::{ReadView, Span, phred_sum};
 
 /// Number of tracked trimming operations.
 pub const TRIM_OPS: usize = 6;
@@ -759,30 +759,38 @@ mod tests {
 
     #[test]
     fn validation_rejects_degenerate_parameters() {
-        assert!(QualityCut {
-            minimum_phred: 20,
-            window: 0
-        }
-        .validate("quality-tail")
-        .is_err());
-        assert!(PolyParams {
-            min_length: 0,
-            max_mismatch_rate: 0.1
-        }
-        .validate("poly-g")
-        .is_err());
-        assert!(PolyParams {
-            min_length: 5,
-            max_mismatch_rate: 1.5
-        }
-        .validate("poly-g")
-        .is_err());
-        assert!(PolyParams {
-            min_length: 5,
-            max_mismatch_rate: f64::NAN
-        }
-        .validate("poly-g")
-        .is_err());
+        assert!(
+            QualityCut {
+                minimum_phred: 20,
+                window: 0
+            }
+            .validate("quality-tail")
+            .is_err()
+        );
+        assert!(
+            PolyParams {
+                min_length: 0,
+                max_mismatch_rate: 0.1
+            }
+            .validate("poly-g")
+            .is_err()
+        );
+        assert!(
+            PolyParams {
+                min_length: 5,
+                max_mismatch_rate: 1.5
+            }
+            .validate("poly-g")
+            .is_err()
+        );
+        assert!(
+            PolyParams {
+                min_length: 5,
+                max_mismatch_rate: f64::NAN
+            }
+            .validate("poly-g")
+            .is_err()
+        );
     }
 
     #[test]

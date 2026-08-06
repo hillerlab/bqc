@@ -3,7 +3,7 @@
 
 use std::process::ExitCode;
 
-use bqc::cli::{run, Cli, Outcome};
+use bqc::cli::{Cli, Outcome, run};
 use clap::Parser;
 
 /// Exit statuses, so a pipeline can branch without parsing stderr.

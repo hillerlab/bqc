@@ -384,7 +384,10 @@ fn load_index(path: &std::path::Path) -> Result<SalmonIndex> {
 /// the process and OS temp cleanup removes it afterwards.
 // : no persistent index cache — rebuilt every run; cache on
 // transcriptome path+mtime when build time starts to matter.
-pub fn build_temp_index(transcriptome: &std::path::Path, threads: usize) -> Result<std::path::PathBuf> {
+pub fn build_temp_index(
+    transcriptome: &std::path::Path,
+    threads: usize,
+) -> Result<std::path::PathBuf> {
     if !transcriptome.is_file() {
         return Err(Error::config(format!(
             "--transcriptome {} is not a file; give a transcriptome FASTA",
@@ -396,7 +399,8 @@ pub fn build_temp_index(transcriptome: &std::path::Path, threads: usize) -> Resu
         std::process::id(),
         now_unique()
     ));
-    let mut options = salmon_index::IndexBuildOptions::new(vec![transcriptome.to_path_buf()], output.clone());
+    let mut options =
+        salmon_index::IndexBuildOptions::new(vec![transcriptome.to_path_buf()], output.clone());
     options.threads = threads;
     salmon_index::build(&options).map_err(|error| {
         Error::config(format!(

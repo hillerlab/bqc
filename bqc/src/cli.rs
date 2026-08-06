@@ -11,14 +11,14 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
 #[cfg(feature = "sniff-strand")]
 use clap::ArgGroup;
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::config::{
-    resolve_threads, AdapterOptions, Config, CorrectionOptions, FilterOptions, LinkedOptions,
-    Merge, OutputOptions, Plan, PolyOptions, QualityCutOptions, ReportFormat, SegmentOptions, Step,
-    TrimOptions,
+    AdapterOptions, Config, CorrectionOptions, FilterOptions, LinkedOptions, Merge, OutputOptions,
+    Plan, PolyOptions, QualityCutOptions, ReportFormat, SegmentOptions, Step, TrimOptions,
+    resolve_threads,
 };
 use crate::correct::LogDetail;
 use crate::engine::{Outputs, RunOptions};
@@ -1103,13 +1103,7 @@ fn run_sniff_strand(command: &SniffStrandCommand) -> Result<Outcome> {
         (None, Some(fasta)) => strand::build_temp_index(fasta, threads)?,
         _ => unreachable!("clap ArgGroup enforces exactly one of --index/--transcriptome"),
     };
-    let (result, plan) = strand::sniff(
-        &input,
-        &index_path,
-        params,
-        span.as_ref(),
-        threads,
-    )?;
+    let (result, plan) = strand::sniff(&input, &index_path, params, span.as_ref(), threads)?;
     let confident = result.is_confident();
     let report = crate::sniff::report::StrandReport::new(&input, &plan, params, result);
     emit(&report.render(common.format)?, common)?;
@@ -1432,18 +1426,20 @@ mod tests {
 
     #[test]
     fn mate_specific_arguments_conflict_with_the_alias() {
-        assert!(Cli::try_parse_from([
-            "bqc",
-            "trim",
-            "in.cbq",
-            "-o",
-            "out.cbq",
-            "--front",
-            "5",
-            "--front-r1",
-            "3",
-        ])
-        .is_err());
+        assert!(
+            Cli::try_parse_from([
+                "bqc",
+                "trim",
+                "in.cbq",
+                "-o",
+                "out.cbq",
+                "--front",
+                "5",
+                "--front-r1",
+                "3",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -1590,17 +1586,19 @@ mod tests {
 
     #[test]
     fn steps_and_negations_cannot_be_combined() {
-        assert!(Cli::try_parse_from([
-            "bqc",
-            "workflow",
-            "in.cbq",
-            "-o",
-            "out.cbq",
-            "--steps",
-            "adapter",
-            "--no-trim",
-        ])
-        .is_err());
+        assert!(
+            Cli::try_parse_from([
+                "bqc",
+                "workflow",
+                "in.cbq",
+                "-o",
+                "out.cbq",
+                "--steps",
+                "adapter",
+                "--no-trim",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

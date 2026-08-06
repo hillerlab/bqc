@@ -16,8 +16,8 @@ use std::hint::black_box;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use binseq::cbq::ColumnarBlock;
 use binseq::BinseqRecord;
+use binseq::cbq::ColumnarBlock;
 use bqc::io::CbqInput;
 
 fn main() -> bqc::Result<()> {

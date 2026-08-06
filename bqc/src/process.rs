@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::adapter::{AdapterHit, AdapterStage};
 use crate::error::{Error, Result};
 use crate::filter::{FilterReason, FilterStage};
-use crate::read::{validate_quality, ReadView, Span};
+use crate::read::{ReadView, Span, validate_quality};
 use crate::trim::{TrimOutcome, TrimStage};
 
 /// Which mate of a record is being processed.
