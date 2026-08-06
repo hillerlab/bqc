@@ -1,4 +1,75 @@
-# bqc usage guide
+<p align="center">
+
+<p align="center">
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="../figures/bqc-dark.png"
+    >
+    <source
+      media="(prefers-color-scheme: light)"
+      srcset="../figures/bqc-light.png"
+    >
+    <img
+      width="200"
+      alt="Hiller Lab"
+      src="../figures/bqc-light.png"
+    >
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="../figures/hillerlab-dark.png"
+    >
+    <source
+      media="(prefers-color-scheme: light)"
+      srcset="../figures/hillerlab-light.png"
+    >
+    <img
+      width="200"
+      alt="Hiller Lab"
+      src="../figures/hillerlab-light.png"
+    >
+  </picture>
+</p>
+
+  <span>
+    <h1 align="center">
+        bqc
+    </h1>
+  </span>
+
+  <span>
+    <h2 align="center">
+        USER GUIDE
+    </h2>
+  </span>
+
+  <p align="center">
+    <a href="https://github.com/hillerlab/bqc" reference="_blank">
+      <img alt="GitHub License" src="https://img.shields.io/github/license/hillerlab/bqc?color=blue">
+    </a>
+  </p>
+
+  <p align="center">
+    <samp>
+        <span> CBQ-native all-in-one quality control tool </span>
+        <br>
+        <span> The Hiller Lab at the Senckenberg Research Institute </span>
+        <br>
+        <br>
+        <a href="https://github.com/ArcInstitute/binseq">binseq</a> .
+        <a href="https://github.com/hillerlab/bqc/blob/master./docs/usage.md">usage</a> .
+        <a href="https://hillerlab.com/">us</a> 
+    </samp>
+  </p>
+
+</p>
+
+---
 
 `bqc` removes adapter sequences, trims and filters sequencing reads stored
 in [CBQ](https://docs.rs/binseq) files. It works natively on CBQ: no FASTQ
@@ -444,9 +515,12 @@ with the rebuild command in the message).
 
 ```bash
 bqc sniff strand reads.cbq --index salmon-index --format json -o strand.json
+bqc sniff strand reads.cbq --transcriptome transcripts.fa   # index built on the fly
 ```
 
 ```text
+--index <PATH>                   Salmon 2.x transcriptome index directory
+--transcriptome <PATH>           transcriptome FASTA; index built on the fly
 --sample-size <INT>              records examined at most [1000000]
 --target-informative <INT>       observations after which sampling may stop [50000]
 --min-informative <INT>          observations below which no answer is given [5000]
@@ -456,6 +530,14 @@ bqc sniff strand reads.cbq --index salmon-index --format json -o strand.json
 --unstranded-threshold <FLOAT>   forward/reverse difference below which a
                                  library is called unstranded [0.10]
 ```
+
+`--index` and `--transcriptome` are mutually exclusive; exactly one is
+required. **`--transcriptome`** takes a transcriptome FASTA instead of a ready
+index and builds a Salmon index from it on the fly in a temporary directory,
+discarded when the run ends. There is no persistent index cache — the index is
+rebuilt on every run — so reach for `--index` when the same reference is used
+repeatedly. The file must exist and be a FASTA; a missing path is a
+configuration error.
 
 Two related results are reported:
 

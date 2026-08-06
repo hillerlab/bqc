@@ -69,6 +69,8 @@
 
 </p>
 
+---
+
 # bqc vs. the ecosystem: end-to-end benchmark
 
 Compares `bqc` against the four tools most often used for the same job —
