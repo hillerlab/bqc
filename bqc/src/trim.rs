@@ -314,7 +314,7 @@ fn terminal_n(sequence: &[u8], span: &mut Span) {
 }
 
 /// Canonical bases considered by poly-X trimming, in tie-breaking order.
-const CANONICAL_BASES: [u8; 4] = [b'A', b'C', b'G', b'T'];
+const CANONICAL_BASES: [u8; 4] = *b"ACGT";
 
 /// Trims a homopolymer-like 3' tail.
 ///
