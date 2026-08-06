@@ -66,11 +66,11 @@
 ---
 
 > [!IMPORTANT]
-> 1. CBQ-native: reads CBQ directly.
-> 2. ~4–8× faster than the field on typical data, with ~90% less memory.
-> 3. Reference-free sniff adapters (curated 234-known adapters) and sniff strand for RNA against a Salmon index (given or produced on-the-fly through `--transcriptome <PATH>`).
-> 4. Everything in one pass: 3' adapter removal (incl. --allow-indels), quality/positional/homopolymer trim, polyA/G tails, overlap error correction from the mate, internal-adapter split, filtering — configurable.
-> 5. Deterministic + safe: single static binary
+> 1. **CBQ-native**: reads CBQ directly.
+> 2. **~4–8× faster** than the field on typical data, with **~90% less memory**.
+> 3. **Reference-free sniff adapters** (curated 234-known adapters) and **sniff strandeness** for RNA against a Salmon index (given or produced on-the-fly through `--transcriptome <PATH>`).
+> 4. **Everything in one pass**: 3' adapter removal (incl. --allow-indels), quality/positional/homopolymer trim, polyA/G tails, overlap error correction from the mate, internal-adapter split, filtering — configurable.
+> 5. Deterministic + **safe**: single static binary
 
 ---
 
