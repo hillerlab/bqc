@@ -323,9 +323,7 @@ impl Report {
             command: command.to_string(),
             input: InputReport {
                 path: input.path().to_path_buf(),
-                bytes: std::fs::metadata(input.path())
-                    .map(|m| m.len())
-                    .unwrap_or(0),
+                bytes: std::fs::metadata(input.path()).map_or(0, |m| m.len()),
                 records: input.num_records(),
                 blocks: input.blocks().len(),
                 schema: input.schema(),
