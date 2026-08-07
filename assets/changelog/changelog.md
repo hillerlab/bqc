@@ -108,3 +108,5 @@ FASTQ conversion, no intermediate files.
   `Result::map_or`.
 - Collapse the canonical-base byte array into a byte-string literal
   (`src/trim.rs`) to satisfy the `byte-char-slices` clippy lint.
+- Run the slow `determinism` and `miri` CI jobs only on pull requests and
+  releases, not on every push; the rest of the suite still runs on push.
