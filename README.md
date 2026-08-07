@@ -117,15 +117,12 @@ See [bench.md](assets/bench/bench.md) for full details.
 
 | dataset | tool | wall s | RSS MB | reads out | bases out (M) | mean len | pairs kept | adapter ppm |
 |---|---|---|---|---|---|---|---|---|
-| typical | **bqc** | **1.59** | 176 | 1,957,469 | 251.7 | 128.6 | 1,957,469 | 0.0 |
+| typical | <mark>**bqc**</mark> | <mark>**1.59**</mark> | 176 | 1,957,469 | 251.7 | 128.6 | 1,957,469 | 0.0 |
 | typical | fastp | 6.46 | 1235 | 1,957,469 | 251.3 | 128.4 | 1,957,469 | 0.0 |
 | typical | cutadapt | 3.86 | 50 | 1,957,469 | 251.2 | 128.3 | 1,957,469 | 0.0 |
 | typical | atropos | 16.65 | 60 | 1,957,469 | 251.2 | 128.3 | 1,957,469 | 0.0 |
 | typical | trimmomatic | 12.95 | 1154 | 1,957,469 | 251.8 | 128.7 | 1,957,469 | 0.0 |
-
-| dataset | tool | wall s | RSS MB | reads out | bases out (M) | mean len | pairs kept | adapter ppm |
-|---|---|---|---|---|---|---|---|---|
-| real | **bqc** | **1.23** | 103 | 1,965,023 | 196.6 | 100.0 | 1,965,023 | 0.0 |
+| real | <mark>**bqc**</mark> | <mark>**1.23**</mark> | 103 | 1,965,023 | 196.6 | 100.0 | 1,965,023 | 0.0 |
 | real | fastp | 5.00 | 1240 | 1,828,671 | 180.9 | 98.3 | 1,828,671 | 0.0 |
 | real | cutadapt | 3.08 | 51 | 1,964,259 | 196.2 | 99.7 | 1,964,259 | 0.0 |
 | real | atropos | 15.43 | 62 | 1,964,259 | 196.2 | 99.7 | 1,964,259 | 0.0 |
