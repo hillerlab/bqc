@@ -178,15 +178,14 @@ gathered and weighed.
 `--detect-sample-size` (default 262144) and `--detect-min-support` (default 0.01)
 tune the sample and the support gate; `--span` restricts both.
 
-Detection **refuses to trim** rather than guess, in two distinct situations:
+Detection never aborts a run for what the data shows, in two distinct
+situations:
 
-* **Nothing clears the gates.** The run aborts with the evidence, asking for
-  explicit sequences — unless `--paired-overlap` was also requested, which needs
-  no adapter sequence and proceeds.
-* **Two unrelated adapters clear them.** A mixed library is a fact about the
-  data, not a tie to break; trimming half the reads with the wrong sequence is
-  worse than stopping. Run `bqc sniff adapters` to see both candidates and
-  choose explicitly.
+* **Nothing clears the gates.** The file passes through untrimmed; the report
+  notes the inconclusive detection and zero reads trimmed.
+* **Two unrelated adapters clear them.** The strongest candidate (by supporting
+  reads and corroboration) is trimmed, and the report shows the mixed decision
+  beside the chosen sequence. `bqc sniff adapters` still lists every candidate.
 
 Note that the mates are inferred independently. A mate with no adapter evidence
 gets no adapter: assuming both mates share a chemistry would configure a
@@ -323,10 +322,14 @@ mixed          two or more are: pooled libraries, or concatenated runs
 inconclusive   nothing clears the gates
 ```
 
-A `mixed` result is never resolved automatically. Two spellings of the *same*
-adapter are not competitors, though: the library carries frame-shifted variants
-of one chemistry, so candidates are compared by sliding them past each other,
-and a family reports its best-corroborated member.
+A `mixed` result is never collapsed into a single confident answer: every
+candidate is reported, and `--emit-config` refuses to write one. `bqc adapter
+--auto-detect` on a mixed file instead trims the strongest candidate and shows
+the decision in its report — see [Auto-detection](#auto-detection). Two
+spellings of the *same* adapter are not competitors, though: the library
+carries frame-shifted variants of one chemistry, so candidates are compared by
+sliding them past each other, and a family reports its best-corroborated
+member.
 
 **Why abundant is not the same as adapter.** A genomic repeat can be as frequent
 in read tails as real read-through. What separates them is the consensus: adapter
@@ -842,8 +845,9 @@ Nothing biological happens unless it is requested:
   input and an `--orphan-prefix`.
 * Quality-based operations on a CBQ file without a quality column are a hard
   error, never silently treated as high quality.
-* Auto-detection refuses to trim on weak evidence rather than guessing, and
-  never invents an adapter shorter than `--min-overlap`.
+* Auto-detection trims only what clears its confidence gates — otherwise the
+  run passes the file through untrimmed — and never invents an adapter shorter
+  than `--min-overlap`.
 * Base correction requires paired input with stored qualities, and refuses a
   donor threshold that is not above the recipient threshold.
 * Options that only qualify another option are rejected on their own:
@@ -975,7 +979,7 @@ The test suite covers the full CBQ schema matrix (16 combinations of pairing,
 qualities, headers and flags), order and thread-count equivalence, standalone
 versus fused equivalence, staged versus fused equivalence, the reason sidecar,
 report rendering, orphan routing, indel-aware matching, paired-overlap inference,
-auto-detection including its refusal path, base correction (both directions,
+auto-detection including its pass-through and mixed-choice paths, base correction (both directions,
 threshold boundaries, ambiguous donors and recipients, negative overlap offsets,
 log escaping and ordering), and property tests for the span, accounting, metadata
 and correction invariants.

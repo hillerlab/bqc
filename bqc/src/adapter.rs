@@ -185,12 +185,6 @@ impl AdapterStage {
         if let Some(overlap) = paired_overlap {
             overlap.validate()?;
         }
-        if r1.is_empty() && r2.is_empty() && paired_overlap.is_none() {
-            return Err(Error::config(
-                "adapter removal requires --adapter-r1, --adapter-r2, --adapter-fasta, \
-                 --paired-overlap or --auto-detect",
-            ));
-        }
         for adapter in r1.iter().chain(&r2) {
             if adapter.len() < params.min_overlap {
                 return Err(Error::InvalidAdapter(format!(
@@ -875,7 +869,8 @@ mod tests {
             format!("{err}").contains("shorter than --min-overlap"),
             "{err}"
         );
-        assert!(AdapterStage::new(Vec::new(), Vec::new(), params, None).is_err());
+        // An empty stage is the documented pass-through.
+        assert!(AdapterStage::new(Vec::new(), Vec::new(), params, None).is_ok());
     }
 
     #[test]

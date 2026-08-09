@@ -994,35 +994,24 @@ fn compile_adapter(
         }
     }
     if options.auto_detect == Some(true) {
-        add_detected(&options, schema, &mut r1, &mut r2, paired_overlap.is_some())?;
+        add_detected(&options, schema, &mut r1, &mut r2)?;
     }
     Ok(Some(AdapterStage::new(r1, r2, params, paired_overlap)?))
 }
 
-/// Adds the adapters auto-detection recommended, or explains why it cannot.
+/// Adds the adapters auto-detection recommended. A mate with no confident
+/// candidate contributes nothing, and a file where neither mate has one passes
+/// through untrimmed: detection outcomes never abort the run.
 fn add_detected(
     options: &AdapterOptions,
     schema: Schema,
     r1: &mut Vec<Adapter>,
     r2: &mut Vec<Adapter>,
-    has_overlap: bool,
 ) -> Result<()> {
     let detection = options
         .detected
         .as_ref()
         .ok_or_else(|| Error::config("--auto-detect was requested, but detection did not run"))?;
-    // A mixed result is never resolved automatically: two unrelated adapters
-    // above the confidence gates is a fact about the data, and picking one
-    // silently would trim half the reads with the wrong sequence.
-    if detection.decision() == crate::sniff::Decision::Mixed {
-        return Err(Error::config(format!(
-            "auto-detection found more than one unrelated adapter \
-             ({} records sampled); this usually means pooled libraries or \
-             concatenated runs. Run `bqc sniff adapters` to see the evidence, \
-             then supply --adapter-r1/--adapter-r2 explicitly",
-            detection.r1.sampled_reads
-        )));
-    }
     if let Some(sequence) = detection.r1.recommended_sequence.as_deref() {
         r1.push(Adapter::new(
             detection
@@ -1041,18 +1030,6 @@ fn add_detected(
             mate.recommended_name.as_deref().unwrap_or("detected"),
             sequence.as_bytes(),
         )?);
-    }
-    // Refusing to trim on weak evidence is the documented behaviour, but only
-    // when nothing else can do the job: paired-overlap inference needs no
-    // adapter sequence, so a run that also asked for it still proceeds.
-    if r1.is_empty() && r2.is_empty() && !has_overlap {
-        return Err(Error::config(format!(
-            "auto-detection found no adapter with confidence >= {} \
-             ({} records sampled); supply --adapter-r1, --adapter-r2 or \
-             --adapter-fasta explicitly",
-            SniffParams::default().gates.min_support_fraction,
-            detection.r1.sampled_reads
-        )));
     }
     Ok(())
 }

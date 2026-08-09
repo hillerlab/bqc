@@ -1882,8 +1882,9 @@ fn paired_overlap_is_validated() {
 
 #[test]
 fn failed_detection_falls_back_to_paired_overlap() {
-    // Detection refuses on clean data, but paired-overlap inference needs no
-    // adapter sequence: asking for both must not abort the run.
+    // Detection finds nothing on clean data, but paired-overlap inference needs
+    // no adapter sequence: asking for both still trims, and asking for
+    // auto-detection alone passes the file through untrimmed.
     let schema = Schema {
         paired: true,
         quality: true,
@@ -1918,20 +1919,26 @@ fn failed_detection_falls_back_to_paired_overlap() {
         "overlap inference stays configured"
     );
 
-    // Without a fallback the same input is still refused.
+    // Without a fallback the file passes through untrimmed.
     let other = fixture.path("other.cbq");
-    let error = bqc(&[
+    let other_report = fixture.path("other-report.json");
+    bqc_ok(&[
         "adapter",
         input.to_str().unwrap(),
         "-o",
         other.to_str().unwrap(),
         "--auto-detect",
-    ])
-    .unwrap_err();
-    assert!(
-        format!("{error}").contains("auto-detection found no adapter"),
-        "{error}"
+        "--report",
+        other_report.to_str().unwrap(),
+    ]);
+    assert_eq!(read_cbq(&other).1.len(), 40);
+    let report: serde_json::Value = serde_json::from_str(&text(&other_report)).unwrap();
+    assert_eq!(
+        report["adapter"]["detection"]["r1"]["decision"],
+        "inconclusive"
     );
+    assert!(report["adapter"]["detection"]["r1"]["recommended_sequence"].is_null());
+    assert_eq!(report["adapter"]["r1_reads_trimmed"], 0);
 }
 
 #[test]
@@ -1984,21 +1991,27 @@ fn detection_samples_only_the_requested_span() {
     );
     assert_eq!(detection["r1"]["sampled_reads"], 400);
 
-    // Sampling the clean half finds nothing and refuses.
-    let error = bqc(&[
+    // Sampling the clean half finds nothing and passes the file through.
+    let clean = fixture.path("clean.cbq");
+    let clean_report = fixture.path("clean-report.json");
+    bqc_ok(&[
         "adapter",
         input.to_str().unwrap(),
         "-o",
-        fixture.path("clean.cbq").to_str().unwrap(),
+        clean.to_str().unwrap(),
         "--span",
         "400..800",
         "--auto-detect",
-    ])
-    .unwrap_err();
-    assert!(
-        format!("{error}").contains("auto-detection found no adapter"),
-        "{error}"
+        "--report",
+        clean_report.to_str().unwrap(),
+    ]);
+    assert_eq!(read_cbq(&clean).1.len(), 400);
+    let report: serde_json::Value = serde_json::from_str(&text(&clean_report)).unwrap();
+    assert_eq!(
+        report["adapter"]["detection"]["r1"]["decision"],
+        "inconclusive"
     );
+    assert_eq!(report["adapter"]["r1_reads_trimmed"], 0);
 }
 
 // ---------------------------------------------------------------- auto-detection
@@ -2280,7 +2293,7 @@ fn auto_detection_assembles_a_consensus_for_an_unknown_adapter() {
 }
 
 #[test]
-fn auto_detection_refuses_below_the_confidence_threshold() {
+fn auto_detection_passes_through_when_nothing_clears_the_gates() {
     let schema = Schema {
         paired: false,
         quality: true,
@@ -2291,21 +2304,24 @@ fn auto_detection_refuses_below_the_confidence_threshold() {
     let records = simple_records(schema, 100, 50);
     let input = fixture.input(schema, &records, BLOCK);
     let output = fixture.path("out.cbq");
+    let report = fixture.path("report.json");
 
-    let error = bqc(&[
+    bqc_ok(&[
         "adapter",
         input.to_str().unwrap(),
         "-o",
         output.to_str().unwrap(),
         "--auto-detect",
-    ])
-    .unwrap_err();
-    let message = format!("{error}");
-    assert!(
-        message.contains("auto-detection found no adapter"),
-        "{message}"
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_eq!(read_cbq(&output).1.len(), 100);
+    let report: serde_json::Value = serde_json::from_str(&text(&report)).unwrap();
+    assert_eq!(
+        report["adapter"]["detection"]["r1"]["decision"],
+        "inconclusive"
     );
-    assert!(!output.exists());
+    assert_eq!(report["adapter"]["r1_reads_trimmed"], 0);
 
     // Detection thresholds need the flag itself.
     let error = bqc(&[
@@ -4040,19 +4056,23 @@ fn a_start_only_known_primer_is_reported_but_never_auto_selected() {
     assert_eq!(primer["median_start"], 0);
 
     let output = fixture.path("auto.cbq");
-    let error = bqc(&[
+    let report_path = fixture.path("auto-report.json");
+    bqc_ok(&[
         "adapter",
         input.to_str().unwrap(),
         "-o",
         output.to_str().unwrap(),
         "--auto-detect",
-    ])
-    .unwrap_err();
-    assert!(
-        format!("{error}").contains("auto-detection found no adapter"),
-        "{error}"
+        "--report",
+        report_path.to_str().unwrap(),
+    ]);
+    assert_eq!(read_cbq(&output).1.len(), 4000);
+    let report: serde_json::Value = serde_json::from_str(&text(&report_path)).unwrap();
+    assert_eq!(
+        report["adapter"]["detection"]["r1"]["decision"],
+        "inconclusive"
     );
-    assert!(!output.exists());
+    assert_eq!(report["adapter"]["r1_reads_trimmed"], 0);
 }
 
 #[test]
@@ -4918,9 +4938,11 @@ fn sniffing_and_auto_detection_reach_the_same_conclusion() {
 }
 
 #[test]
-fn auto_detection_refuses_to_choose_between_two_libraries() {
-    // Half the reads carry TruSeq, half carry an unrelated adapter. Picking one
-    // silently would mistrim the other half, so the run must stop.
+fn auto_detection_trims_with_the_strongest_of_two_libraries() {
+    // Half the reads carry TruSeq, half carry an unrelated adapter. The
+    // strongest candidate is trimmed and the report shows the mixed decision;
+    // picking one silently would mistrim the other half, so the run surfaces
+    // the choice instead of stopping.
     let fixture = Fixture::new();
     let mut sequences = Sequences::new(0x_ABCD_0001_u64);
     let records: Vec<Record> = (0..6000)
@@ -4950,16 +4972,40 @@ fn auto_detection_refuses_to_choose_between_two_libraries() {
     ]);
     assert_eq!(json(&sniffed)["result"]["r1"]["decision"], "mixed");
 
-    let error = bqc(&[
+    // The recommended candidate is exactly what `assemble` orders first.
+    let sniffed_json = json(&sniffed);
+    let winner = sniffed_json["result"]["r1"]["candidates"][0]["sequence"]
+        .as_str()
+        .unwrap();
+    assert!(
+        winner == ADAPTER_R1 || winner == std::str::from_utf8(NOVEL_ADAPTER).unwrap(),
+        "{winner}"
+    );
+
+    let out = fixture.path("out.cbq");
+    let report_path = fixture.path("report.json");
+    bqc_ok(&[
         "adapter",
         input.to_str().unwrap(),
         "-o",
-        fixture.path("out.cbq").to_str().unwrap(),
+        out.to_str().unwrap(),
         "--auto-detect",
-    ])
-    .unwrap_err();
+        "--report",
+        report_path.to_str().unwrap(),
+    ]);
+    let report = json(&report_path);
+    assert_eq!(
+        report["configuration"]["workflow"]["adapter"]["r1"][0]["sequence"],
+        winner
+    );
+    assert_eq!(report["adapter"]["detection"]["r1"]["decision"], "mixed");
+    assert_eq!(
+        report["adapter"]["detection"]["r1"]["recommended_sequence"],
+        winner
+    );
+    let trimmed = report["adapter"]["r1_reads_trimmed"].as_u64().unwrap();
+    assert!(trimmed > 0 && trimmed < 6000, "{trimmed}");
     assert!(
-        format!("{error}").contains("more than one unrelated adapter"),
-        "{error}"
+        report["adapter"]["r1_bases_removed"].as_u64().unwrap() > 0
     );
 }
