@@ -5005,7 +5005,5 @@ fn auto_detection_trims_with_the_strongest_of_two_libraries() {
     );
     let trimmed = report["adapter"]["r1_reads_trimmed"].as_u64().unwrap();
     assert!(trimmed > 0 && trimmed < 6000, "{trimmed}");
-    assert!(
-        report["adapter"]["r1_bases_removed"].as_u64().unwrap() > 0
-    );
+    assert!(report["adapter"]["r1_bases_removed"].as_u64().unwrap() > 0);
 }
