@@ -378,7 +378,10 @@ pub struct AdapterArgs {
 
     /// Infer adapter sequences from the data before trimming: match a
     /// built-in known-adapter library, then fall back to suffix k-mer
-    /// enrichment and a consensus. Aborts below the confidence threshold.
+    /// enrichment and a consensus. Nothing below the threshold is trimmed —
+    /// the file passes through untrimmed; when several unrelated candidates
+    /// clear the gates, the strongest is trimmed and the report notes the
+    /// mixed decision.
     #[arg(long)]
     pub auto_detect: bool,
 

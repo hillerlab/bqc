@@ -457,18 +457,25 @@ impl Report {
     ) -> std::io::Result<()> {
         for mate in std::iter::once(&detection.r1).chain(detection.r2.as_ref()) {
             match (&mate.recommended_sequence, mate.candidates.first()) {
-                (Some(sequence), Some(leader)) => writeln!(
-                    out,
-                    "  detected {}: {sequence} ({}, {:.2}% of reads)",
-                    mate.mate,
-                    leader
-                        .evidence_sources
-                        .iter()
-                        .map(|source| source.name())
-                        .collect::<Vec<_>>()
-                        .join("+"),
-                    leader.support_fraction * 100.0,
-                )?,
+                (Some(sequence), Some(leader)) => {
+                    let note = if mate.decision.is_confident() {
+                        String::new()
+                    } else {
+                        format!(", {}", mate.decision.name())
+                    };
+                    writeln!(
+                        out,
+                        "  detected {}: {sequence} ({}, {:.2}% of reads{note})",
+                        mate.mate,
+                        leader
+                            .evidence_sources
+                            .iter()
+                            .map(|source| source.name())
+                            .collect::<Vec<_>>()
+                            .join("+"),
+                        leader.support_fraction * 100.0,
+                    )?;
+                }
                 _ => writeln!(
                     out,
                     "  detected {}: none ({})",

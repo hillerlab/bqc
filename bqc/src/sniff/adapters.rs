@@ -1043,10 +1043,11 @@ fn assemble(
     // Deciding demotes the losers of a family, so re-order: the recommended
     // candidate must be the one a reader sees first.
     candidates.sort_by(order);
-    let recommended = decision
-        .is_confident()
-        .then(|| candidates.iter().find(|c| c.confidence == Confidence::High))
-        .flatten();
+    // The strongest high-confidence candidate is recommended even when the file
+    // is mixed: `--auto-detect` trims with the best match instead of stopping.
+    // `decision` still reports the ambiguity, and `recommendation()` (config
+    // writing) still requires a confident file.
+    let recommended = candidates.iter().find(|c| c.confidence == Confidence::High);
     let recommended_sequence =
         recommended.map(|c| String::from_utf8_lossy(&c.sequence).into_owned());
     let recommended_name = recommended.and_then(|c| c.known_name.clone());
