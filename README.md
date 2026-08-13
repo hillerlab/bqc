@@ -57,7 +57,7 @@
         <br>
         <a href="https://github.com/ArcInstitute/binseq">binseq</a> .
         <a href="https://github.com/hillerlab/bqc/blob/master/assets/docs/usage.md">usage</a> .
-        <a href="https://github.com/hillerlab/bqc/blob/master/assets/bench/bench.md">bechmark</a> .
+        <a href="https://github.com/hillerlab/bqc/blob/master/assets/bench/bench.md">benchmark</a> .
         <a href="https://hillerlab.com/">us</a> 
     </samp>
   </p>
