@@ -92,6 +92,28 @@ All notable changes to this project are documented in this file.
   candidate families rather than unique reads (`--memory-mb`).
 - Benchmarks for both commands (vs fastp `--umi` and `--dedup`) and the
   matching user-guide and README documentation.
+  
+## 0.0.2 — 2026-08-09
+
+Auto-detection is no longer a gate on the run. Detection is advisory: a file
+where nothing clears the confidence gates passes through untrimmed, and a
+mixed library is trimmed with the strongest match instead of aborting.
+
+### Changed
+
+- `--auto-detect` no longer aborts on an inconclusive or mixed detection:
+  a mate with no confident candidate contributes nothing (the file passes
+  through untrimmed), and a mate with several unrelated candidates above the
+  gates is trimmed with the strongest one.
+- The adapter report names the confidence behind a non-confident picked
+  sequence (`high`/`medium`/`low`), so a mixed choice is never presented as
+  settled.
+- An empty `AdapterStage` is the documented pass-through, confirming that a
+  run which detects nothing still writes its output.
+- `sniff adapters --emit-config` still requires a uniquely confident result;
+  the "writes a config only when it can" contract is unchanged.
+- Benchmark scripts moved under `bench/scripts` and the README highlights
+  updated.
 
 ## 0.0.1 — 2026-08-06
 
