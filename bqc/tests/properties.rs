@@ -78,6 +78,7 @@ fn everything() -> Workflow {
         Some(trim_stage(mate)),
         Some(filter),
         None,
+        None,
     )
     .unwrap()
 }

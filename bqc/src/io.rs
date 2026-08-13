@@ -279,8 +279,14 @@ pub fn fragment(header: FileHeader) -> Result<Fragment> {
 /// whole mate, so the span indexes them exactly as it indexes the record.
 #[derive(Debug, Clone, Copy)]
 pub struct MateOutput<'a> {
+    /// Span into the record's own bytes.
     pub span: Span,
-    corrected: Option<(&'a [u8], &'a [u8])>,
+    /// Corrected sequence, quality and the span into them. Present only when
+    /// correction rewrote this mate; the span may use a different coordinate
+    /// system than `span` after UMI clipping.
+    corrected: Option<(&'a [u8], &'a [u8], Span)>,
+    /// Header override, applied in place of the record's own header.
+    pub header: Option<&'a [u8]>,
 }
 
 impl<'a> MateOutput<'a> {
@@ -290,36 +296,50 @@ impl<'a> MateOutput<'a> {
         Self {
             span,
             corrected: None,
+            header: None,
         }
     }
 
     /// A mate whose bases were corrected, written from `sequence` and `quality`.
-    fn corrected(span: Span, sequence: &'a [u8], quality: &'a [u8]) -> Self {
+    fn corrected(record_span: Span, scratch_span: Span, sequence: &'a [u8], quality: &'a [u8]) -> Self {
         Self {
-            span,
-            corrected: Some((sequence, quality)),
+            span: record_span,
+            corrected: Some((sequence, quality, scratch_span)),
+            header: None,
         }
     }
 
     /// A mate written from correction scratch when it was corrected, and from the
-    /// record otherwise.
+    /// record otherwise. `record_span` indexes the record's bytes; `scratch_span`
+    /// indexes the corrected buffers (the two differ only after UMI clipping).
     #[must_use]
     pub fn from_scratch(
-        span: Span,
+        record_span: Span,
+        scratch_span: Span,
         scratch: &'a crate::correct::CorrectionScratch,
         mate: Mate,
     ) -> Self {
         match scratch.corrected(mate) {
-            Some((sequence, quality)) => Self::corrected(span, sequence, quality),
-            None => Self::borrowed(span),
+            Some((sequence, quality)) => {
+                Self::corrected(record_span, scratch_span, sequence, quality)
+            }
+            None => Self::borrowed(record_span),
         }
     }
 
-    /// The sequence to write, and the corrected quality when there is one.
-    fn bytes(self, from_record: &'a [u8]) -> (&'a [u8], Option<&'a [u8]>) {
+    /// Attaches a header override.
+    #[must_use]
+    pub fn with_header(mut self, header: Option<&'a [u8]>) -> Self {
+        self.header = header;
+        self
+    }
+
+    /// The sequence to write, the corrected quality when there is one, and the
+    /// span indexing both.
+    fn bytes(self, from_record: &'a [u8]) -> (&'a [u8], Option<&'a [u8]>, Span) {
         match self.corrected {
-            Some((sequence, quality)) => (sequence, Some(quality)),
-            None => (from_record, None),
+            Some((sequence, quality, span)) => (sequence, Some(quality), span),
+            None => (from_record, None, self.span),
         }
     }
 }
@@ -348,40 +368,39 @@ pub fn push_record<R: BinseqRecord>(
     r1: MateOutput<'_>,
     r2: MateOutput<'_>,
 ) -> Result<()> {
-    let (s_seq, s_qual_override) = r1.bytes(record.sseq());
-    let (x_seq, x_qual_override) = r2.bytes(record.xseq());
-    let (r1, r2) = (r1.span, r2.span);
+    let (s_seq, s_qual_override, s_span) = r1.bytes(record.sseq());
+    let (x_seq, x_qual_override, x_span) = r2.bytes(record.xseq());
     let s_qual = if schema.quality {
         let qual = s_qual_override.unwrap_or_else(|| record.squal());
         check_len(record.index(), "R1", s_seq, qual)?;
-        Some(&qual[r1.start..r1.end])
+        Some(&qual[s_span.start..s_span.end])
     } else {
         None
     };
     let x_qual = if schema.quality && schema.paired {
         let qual = x_qual_override.unwrap_or_else(|| record.xqual());
         check_len(record.index(), "R2", x_seq, qual)?;
-        Some(&qual[r2.start..r2.end])
+        Some(&qual[x_span.start..x_span.end])
     } else {
         None
     };
 
     let builder = SequencingRecordBuilder::default()
-        .s_seq(&s_seq[r1.start..r1.end])
+        .s_seq(&s_seq[s_span.start..s_span.end])
         .opt_s_qual(s_qual)
         .opt_s_header(if schema.headers {
-            Some(record.sheader())
+            Some(r1.header.unwrap_or_else(|| record.sheader()))
         } else {
             None
         })
         .opt_x_seq(if schema.paired {
-            Some(&x_seq[r2.start..r2.end])
+            Some(&x_seq[x_span.start..x_span.end])
         } else {
             None
         })
         .opt_x_qual(x_qual)
         .opt_x_header(if schema.headers && schema.paired {
-            Some(record.xheader())
+            Some(r2.header.unwrap_or_else(|| record.xheader()))
         } else {
             None
         })
@@ -404,12 +423,12 @@ pub fn push_mate<R: BinseqRecord>(
     output: MateOutput<'_>,
 ) -> Result<()> {
     debug_assert!(!schema.paired, "orphan outputs are single-end");
-    let span = output.span;
+    let header_override = output.header;
     let (sequence, quality, header) = match mate {
         crate::process::Mate::R1 => (record.sseq(), record.squal(), record.sheader()),
         crate::process::Mate::R2 => (record.xseq(), record.xqual(), record.xheader()),
     };
-    let (sequence, corrected_quality) = output.bytes(sequence);
+    let (sequence, corrected_quality, span) = output.bytes(sequence);
     let quality = corrected_quality.unwrap_or(quality);
     let quality = if schema.quality {
         check_len(record.index(), mate.name(), sequence, quality)?;
@@ -420,7 +439,11 @@ pub fn push_mate<R: BinseqRecord>(
     let builder = SequencingRecordBuilder::default()
         .s_seq(&sequence[span.start..span.end])
         .opt_s_qual(quality)
-        .opt_s_header(if schema.headers { Some(header) } else { None })
+        .opt_s_header(if schema.headers {
+            Some(header_override.unwrap_or(header))
+        } else {
+            None
+        })
         .opt_flag(if schema.flags { record.flag() } else { None });
     fragment.push(builder.build()?)?;
     Ok(())
@@ -858,6 +881,7 @@ mod tests {
 
         let result = MateResult {
             retained: Span { start: 0, end: 23 },
+            umi_clip: 0,
             original_length: 151,
             adapter_trimmed_length: 40,
             adapter_hit: Some(AdapterHit {
@@ -888,6 +912,7 @@ mod tests {
 
         let result = MateResult {
             retained: Span { start: 0, end: 147 },
+            umi_clip: 0,
             original_length: 151,
             adapter_trimmed_length: 151,
             adapter_hit: None,

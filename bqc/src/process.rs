@@ -114,6 +114,8 @@ impl FragmentResult {
 pub struct MateResult {
     /// Coordinates retained from the original read.
     pub retained: Span,
+    /// Bases removed from the front of this mate by UMI extraction.
+    pub umi_clip: usize,
     /// Length of the original read.
     pub original_length: usize,
     /// Length after adapter removal, before trimming.
@@ -159,6 +161,8 @@ pub struct PairResult {
     pub overlap: Option<crate::overlap::Overlap>,
     /// What base correction did to this pair.
     pub correction: crate::correct::CorrectionSummary,
+    /// Whether a UMI tag was added to this record's headers.
+    pub umi_tagged: bool,
 }
 
 impl PairResult {
@@ -177,6 +181,7 @@ impl PairResult {
 /// A compiled, ready-to-run processing pipeline.
 #[derive(Debug, Clone, Serialize)]
 pub struct Workflow {
+    pub umi: Option<crate::umi::UmiStage>,
     pub adapter: Option<AdapterStage>,
     /// Linked segmentation, which runs at the start of the adapter stage.
     pub linked: Option<crate::linked::LinkedStage>,
@@ -202,16 +207,18 @@ impl Workflow {
         trim: Option<TrimStage>,
         filter: Option<FilterStage>,
         correction: Option<crate::correct::CorrectionStage>,
+        umi: Option<crate::umi::UmiStage>,
     ) -> Result<Self> {
         if adapter.is_none()
             && linked.is_none()
             && trim.is_none()
             && filter.is_none()
             && correction.is_none()
+            && umi.is_none()
         {
             return Err(Error::config(
-                "no operation configured; enable at least one adapter, trim, filter \
-                 or correction option",
+                "no operation configured; enable at least one adapter, trim, filter, \
+                 correction or umi option",
             ));
         }
         // One resolved copy of the overlap parameters, used by whichever stages
@@ -222,6 +229,7 @@ impl Workflow {
             .and_then(|stage| stage.paired_overlap)
             .or_else(|| correction.map(|_| crate::overlap::OverlapParams::default()));
         Ok(Self {
+            umi,
             adapter,
             linked,
             trim,
@@ -246,6 +254,7 @@ impl Workflow {
         filter: Option<FilterStage>,
     ) -> Self {
         Self {
+            umi: None,
             adapter: None,
             linked: None,
             trim,
@@ -297,6 +306,9 @@ impl Workflow {
     #[must_use]
     pub fn stage_order(&self) -> Vec<&'static str> {
         let mut stages = Vec::new();
+        if self.umi.is_some() {
+            stages.push("umi");
+        }
         if self.correction.is_some() {
             stages.push("correct");
         }
@@ -421,6 +433,7 @@ impl Workflow {
             disposition,
             overlap,
             correction,
+            umi_tagged: false,
         })
     }
 
@@ -564,6 +577,7 @@ impl Workflow {
         debug_assert!(span.start <= span.end && span.end <= read.len());
         Ok(MateResult {
             retained: span,
+            umi_clip: 0,
             original_length: read.len(),
             adapter_trimmed_length,
             adapter_hit,
@@ -595,13 +609,13 @@ mod tests {
 
     #[test]
     fn workflow_requires_at_least_one_stage() {
-        assert!(Workflow::new(None, None, None, None, None).is_err());
-        assert!(Workflow::new(Some(adapter_stage()), None, None, None, None).is_ok());
+        assert!(Workflow::new(None, None, None, None, None, None).is_err());
+        assert!(Workflow::new(Some(adapter_stage()), None, None, None, None, None).is_ok());
     }
 
     #[test]
     fn adapter_stage_shortens_the_read_at_the_match() {
-        let workflow = Workflow::new(Some(adapter_stage()), None, None, None, None).unwrap();
+        let workflow = Workflow::new(Some(adapter_stage()), None, None, None, None, None).unwrap();
         let sequence = [b"ACGTACGTACGTACGTACGT".as_slice(), ADAPTER].concat();
         let quality = vec![b'I'; sequence.len()];
         let read = ReadView::unchecked(&sequence, Some(&quality));
@@ -617,7 +631,7 @@ mod tests {
 
     #[test]
     fn per_mate_adapters_are_applied_independently() {
-        let workflow = Workflow::new(Some(adapter_stage()), None, None, None, None).unwrap();
+        let workflow = Workflow::new(Some(adapter_stage()), None, None, None, None, None).unwrap();
         // R1's adapter appears in R2 and vice versa: neither should match.
         let r2_only = [b"ACGTACGTACGTACGTACGT".as_slice(), ADAPTER].concat();
         let read = ReadView::unchecked(&r2_only, None);
@@ -641,7 +655,8 @@ mod tests {
             ..FilterStage::default()
         };
         let workflow =
-            Workflow::new(Some(adapter_stage()), None, Some(trim), Some(filter), None).unwrap();
+            Workflow::new(Some(adapter_stage()), None, Some(trim), Some(filter), None, None)
+                .unwrap();
         assert_eq!(workflow.stage_order(), vec!["adapter", "trim", "filter"]);
 
         // 20 bases survive the adapter, then 4 are cut, leaving 16 (< 20).
@@ -661,7 +676,7 @@ mod tests {
             qualified_quality: 15,
             ..FilterStage::default()
         };
-        let workflow = Workflow::new(None, None, None, Some(filter), None).unwrap();
+        let workflow = Workflow::new(None, None, None, Some(filter), None, None).unwrap();
         let long = ReadView::unchecked(b"ACGTACGTACGT", None);
         let short = ReadView::unchecked(b"ACGT", None);
 
@@ -689,7 +704,7 @@ mod tests {
             qualified_quality: 15,
             ..FilterStage::default()
         };
-        let workflow = Workflow::new(None, None, None, Some(filter), None)
+        let workflow = Workflow::new(None, None, None, Some(filter), None, None)
             .unwrap()
             .with_pair_policy(PairPolicy::Orphan);
         let long = ReadView::unchecked(b"ACGTACGTACGT", None);
@@ -712,7 +727,7 @@ mod tests {
         assert_eq!(result.disposition, PairDisposition::Rejected);
 
         // The same configuration under strict pairing rejects broken pairs.
-        let strict = Workflow::new(None, None, None, Some(filter), None).unwrap();
+        let strict = Workflow::new(None, None, None, Some(filter), None, None).unwrap();
         let result = strict.process(5, long, Some(short)).unwrap();
         assert_eq!(result.disposition, PairDisposition::Rejected);
     }
@@ -729,7 +744,7 @@ mod tests {
             },
             r2: MateTrim::default(),
         };
-        let workflow = Workflow::new(None, None, Some(trim), None, None).unwrap();
+        let workflow = Workflow::new(None, None, Some(trim), None, None, None).unwrap();
         assert!(workflow.needs_quality());
         let read = ReadView::unchecked(b"ACGTACGT", None);
         assert!(matches!(
@@ -745,7 +760,7 @@ mod tests {
             qualified_quality: 15,
             ..FilterStage::default()
         };
-        let workflow = Workflow::new(None, None, None, Some(filter), None).unwrap();
+        let workflow = Workflow::new(None, None, None, Some(filter), None, None).unwrap();
         let read = ReadView::unchecked(b"ACGT", Some(b"II\x01I"));
         let err = workflow.process(11, read, None).unwrap_err();
         assert!(matches!(
@@ -794,7 +809,7 @@ mod tests {
             Some(crate::overlap::OverlapParams::default()),
         )
         .unwrap();
-        let workflow = Workflow::new(Some(stage), None, None, None, None).unwrap();
+        let workflow = Workflow::new(Some(stage), None, None, None, None, None).unwrap();
         let r1 = ReadView::unchecked(&r1_seq, None);
         let r2 = ReadView::unchecked(&r2_seq, None);
         let result = workflow.process(0, r1, Some(r2)).unwrap();
@@ -822,7 +837,7 @@ mod tests {
             Some(crate::overlap::OverlapParams::default()),
         )
         .unwrap();
-        let workflow = Workflow::new(Some(stage), None, None, None, None).unwrap();
+        let workflow = Workflow::new(Some(stage), None, None, None, None, None).unwrap();
         let r1_seq = [b"ACGTACGTACGTACGTACGT".as_slice(), ADAPTER].concat();
         let r2_seq = vec![b'T'; 60];
         let r1 = ReadView::unchecked(&r1_seq, None);
@@ -848,7 +863,7 @@ mod tests {
             },
             r2: MateTrim::default(),
         };
-        let workflow = Workflow::new(None, None, Some(trim), None, None).unwrap();
+        let workflow = Workflow::new(None, None, Some(trim), None, None, None).unwrap();
         let read = ReadView::unchecked(b"ACGT", None);
         let result = workflow.process(0, read, None).unwrap();
         assert_eq!(result.r1.retained.len(), 0);

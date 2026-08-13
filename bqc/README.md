@@ -71,7 +71,7 @@ rejected with a pointer to `bqtools encode`.
 The stage order is part of the output contract, not an implementation detail:
 
 ```text
-correct → adapter → trim → filter
+umi → correct → adapter → trim → filter
 ```
 
 Correction comes first so that corrected bases *and* corrected qualities are
@@ -90,6 +90,43 @@ fixed front/tail
 This differs in detail from fastp's internal ordering; `bqc` does not claim
 fastp parity. Changing the order would change output, so it is covered by
 golden and property tests.
+
+## UMI extraction
+
+`bqc umi` (or `[umi]` in a workflow) extracts a unique molecular identifier and
+relocates it into the read name, matching fastp's `--umi` feature. This is
+**extraction/relocation**, not UMI family clustering, error correction or
+consensus calling.
+
+```text
+--umi-location <read1|read2|index1|index2|per_index|per_read>
+--umi-length <INT>      required for read-derived UMIs
+--umi-skip <INT>        bases to skip after the UMI   (default 0)
+--umi-prefix <STR>      prefix before the UMI in the name (default empty)
+--umi-delimiter <STR>   delimiter before the UMI         (default ":")
+```
+
+The six locations:
+
+| location    | UMI source          | sequence modification |
+| ----------- | ------------------- | --------------------- |
+| `index1`    | first index         | none                  |
+| `index2`    | second index        | none                  |
+| `read1`     | R1 prefix           | remove UMI + skip from R1 |
+| `read2`     | R2 prefix           | remove UMI + skip from R2 |
+| `per_index` | `index1_index2`     | none                  |
+| `per_read`  | `r1umi_r2umi`       | remove prefixes from both |
+
+The tag is inserted before the first space in the header (appended when there is
+no space), and applied to both mate names. A read shorter than `length + skip`
+is an explicit error — unlike fastp, `bqc` never silently truncates a UMI. UMI
+processing requires stored read headers, and `read2`, `index2`, `per_index` and
+`per_read` require paired input.
+
+UMI removal runs **before** correction, so a read-head UMI never participates in
+overlap inference, adapter matching, trimming or filtering, and it is never
+credited to adapter removal in the report.
+
 
 ## Adapter matching
 
@@ -524,6 +561,36 @@ copied to every fragment of it.
 
 Output order is source record index ascending, then segment index ascending, at
 any thread count.
+
+
+## Deduplication
+
+`bqc dedup` removes exact duplicates across the whole dataset, preserving the
+earliest occurrence byte-for-byte. It is a **separate command**, not a workflow
+stage, because it needs global cross-block state that would dismantle the
+workflow's single-pass, independent-block property.
+
+Two records are duplicates when their sequence payloads are byte-for-byte equal;
+qualities, names and flags do not participate. For paired input the ordered
+`(R1, R2)` pair is the key, so `(AC, CGT)` never aliases `(ACC, GT)`.
+
+```text
+--memory-mb <INT>   memory budget in MiB   (default 1024)
+```
+
+The pipeline is two passes. Pass 1 fingerprints every record into two bitsets to
+discover fingerprints that repeat; pass 2 re-reads in input order and, for each
+candidate, compares the **exact sequence** against a byte arena keyed by
+fingerprint. Bloom and hash collisions only cause extra exact work — they can
+never drop a record — so the result is exact, deterministic, and never deletes a
+unique read. If the exact candidate table exhausts the memory budget the run
+aborts rather than silently switching to approximate deletion.
+
+Deduplication operates on the sequences physically present in the input. To
+deduplicate raw reads (UMI bases included), run `bqc dedup` on the raw file; to
+collapse inserts after UMI removal, run `bqc umi` first. This is sequence
+deduplication, **not** UMI-aware molecular deduplication, which needs alignment
+coordinates and belongs elsewhere.
 
 ## Base correction
 

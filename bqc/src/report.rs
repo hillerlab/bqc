@@ -248,6 +248,14 @@ pub struct FragmentCountEntry {
     pub source_records: u64,
 }
 
+/// UMI extraction statistics. Present exactly when the UMI stage ran.
+#[derive(Debug, Serialize)]
+pub struct UmiReport {
+    pub records_tagged: u64,
+    pub r1_bases_removed: u64,
+    pub r2_bases_removed: u64,
+}
+
 /// The complete structured report.
 #[derive(Debug, Serialize)]
 pub struct Report {
@@ -265,6 +273,7 @@ pub struct Report {
     pub linked: Option<LinkedReport>,
     pub segment: Option<SegmentReport>,
     pub correction: Option<CorrectionReport>,
+    pub umi: Option<UmiReport>,
     pub performance: PerformanceReport,
 }
 
@@ -381,6 +390,7 @@ impl Report {
                 .correction
                 .as_ref()
                 .map(|_| correction_report(stats)),
+            umi: plan.workflow.umi.as_ref().map(|_| umi_report(stats)),
             performance: PerformanceReport {
                 elapsed_seconds: seconds,
                 records_per_second: per_second(stats.records_in),
@@ -829,6 +839,15 @@ fn correction_report(stats: &Stats) -> CorrectionReport {
                 pairs: *pairs,
             })
             .collect(),
+    }
+}
+
+/// Builds the UMI section from accumulated statistics.
+fn umi_report(stats: &Stats) -> UmiReport {
+    UmiReport {
+        records_tagged: stats.records_tagged,
+        r1_bases_removed: stats.umi_bases_removed[0],
+        r2_bases_removed: stats.umi_bases_removed[1],
     }
 }
 

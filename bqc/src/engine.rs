@@ -149,6 +149,7 @@ struct Scratch {
     fragments: Vec<crate::process::FragmentResult>,
     /// The header of the fragment currently being written.
     header: Vec<u8>,
+    umi: crate::umi::UmiScratch,
 }
 
 /// Immutable state shared by every worker.
@@ -225,14 +226,14 @@ impl WindowState {
 /// can keep draining later chunks while an early chunk is slow. This gate caps
 /// all claimed work — processing, queued and pending combined — relative to the
 /// number of chunks that have actually been committed.
-struct CommitWindow {
+pub(crate) struct CommitWindow {
     limit: usize,
     state: Mutex<WindowState>,
     advanced: Condvar,
 }
 
 impl CommitWindow {
-    fn new(limit: usize) -> Self {
+    pub(crate) fn new(limit: usize) -> Self {
         Self {
             limit: limit.max(1),
             state: Mutex::new(WindowState::default()),
@@ -240,7 +241,7 @@ impl CommitWindow {
         }
     }
 
-    fn claim(&self, total: usize, abort: &AtomicBool) -> Option<usize> {
+    pub(crate) fn claim(&self, total: usize, abort: &AtomicBool) -> Option<usize> {
         let mut state = self
             .state
             .lock()
@@ -259,7 +260,7 @@ impl CommitWindow {
         }
     }
 
-    fn commit_through(&self, committed: usize) {
+    pub(crate) fn commit_through(&self, committed: usize) {
         let mut state = self
             .state
             .lock()
@@ -269,7 +270,7 @@ impl CommitWindow {
         self.advanced.notify_all();
     }
 
-    fn wake_all(&self) {
+    pub(crate) fn wake_all(&self) {
         let _guard = self
             .state
             .lock()
@@ -442,7 +443,7 @@ fn process_chunk(
             continue;
         }
 
-        let r1 = ReadView::new(
+        let mut r1 = ReadView::new(
             record.sseq(),
             if schema.quality {
                 Some(record.squal())
@@ -452,7 +453,7 @@ fn process_chunk(
             index,
             Mate::R1.name(),
         )?;
-        let r2 = if schema.paired {
+        let mut r2 = if schema.paired {
             Some(ReadView::new(
                 record.xseq(),
                 if schema.quality {
@@ -472,9 +473,43 @@ fn process_chunk(
             continue;
         }
 
-        let result = context
+        // UMI extraction runs first: it reads raw sequences and headers, then
+        // the clipped views flow through every biological stage so the UMI never
+        // participates in correction, overlap, adapter matching or trimming.
+        let umi_outcome = match &context.workflow.umi {
+            Some(stage) => {
+                let outcome = stage.extract(&record, r1, r2, &mut scratch.umi)?;
+                r1 = ReadView::unchecked(
+                    &record.sseq()[outcome.r1_clip..],
+                    r1.quality.map(|q| &q[outcome.r1_clip..]),
+                );
+                r2 = r2.map(|view| {
+                    ReadView::unchecked(
+                        &record.xseq()[outcome.r2_clip..],
+                        view.quality.map(|q| &q[outcome.r2_clip..]),
+                    )
+                });
+                Some(outcome)
+            }
+            None => None,
+        };
+
+        let mut result = context
             .workflow
             .process_corrected(index, r1, r2, &mut scratch.correction)?;
+        // Translate lengths back into raw-record space so the UMI bases are
+        // counted as input, not as adapter removal.
+        if let Some(outcome) = &umi_outcome {
+            result.r1.umi_clip = outcome.r1_clip;
+            result.r1.original_length += outcome.r1_clip;
+            result.r1.adapter_trimmed_length += outcome.r1_clip;
+            if let Some(r2) = &mut result.r2 {
+                r2.umi_clip = outcome.r2_clip;
+                r2.original_length += outcome.r2_clip;
+                r2.adapter_trimmed_length += outcome.r2_clip;
+            }
+            result.umi_tagged = true;
+        }
         chunk.stats.record(&result);
         // Substitution values come from the plan, which holds the pre-mutation
         // bases by construction.
@@ -492,7 +527,7 @@ fn process_chunk(
                 &scratch.correction,
             );
         }
-        route_record(context, &mut chunk, &record, &result, &scratch.correction)?;
+        route_record(context, &mut chunk, &record, &result, scratch)?;
     }
 
     // Force every record into a completed block so the committer only has to
@@ -677,30 +712,51 @@ fn route_record<R: BinseqRecord>(
     chunk: &mut ChunkOutput,
     record: &R,
     result: &crate::process::PairResult,
-    scratch: &crate::correct::CorrectionScratch,
+    scratch: &Scratch,
 ) -> Result<()> {
     let schema = context.schema;
-    let r2_span = result
-        .r2
-        .map_or(Span { start: 0, end: 0 }, |mate| mate.retained);
     // A corrected mate is written from worker scratch; everything else is
-    // borrowed straight from the record.
-    let corrected = |span: Span, mate: Mate| MateOutput::from_scratch(span, scratch, mate);
+    // borrowed straight from the record. UMI shifts the retained span back into
+    // raw-record coordinates for borrowed bytes, while the corrected scratch
+    // stays in the clipped coordinate system.
+    let corrected = |mate_result: &crate::process::MateResult, mate: Mate| {
+        let record_span = Span {
+            start: mate_result.retained.start + mate_result.umi_clip,
+            end: mate_result.retained.end + mate_result.umi_clip,
+        };
+        let header = result.umi_tagged.then(|| match mate {
+            Mate::R1 => scratch.umi.r1_override(),
+            Mate::R2 => scratch.umi.r2_override(),
+        });
+        MateOutput::from_scratch(
+            record_span,
+            mate_result.retained,
+            &scratch.correction,
+            mate,
+        )
+        .with_header(header)
+    };
+    let r2_out = |mate: Option<&crate::process::MateResult>| {
+        mate.map_or(
+            MateOutput::borrowed(Span::full(0)),
+            |mate_result| corrected(mate_result, Mate::R2),
+        )
+    };
     match result.disposition {
         crate::process::PairDisposition::Accepted => {
             push_record(
                 &mut chunk.accepted,
                 schema,
                 record,
-                corrected(result.r1.retained, Mate::R1),
-                corrected(r2_span, Mate::R2),
+                corrected(&result.r1, Mate::R1),
+                r2_out(result.r2.as_ref()),
             )?;
             return Ok(());
         }
         crate::process::PairDisposition::Rejected => {
             if let Some(failed) = chunk.failed.as_mut() {
                 // `original` means exactly that: the uncorrected pair as it was
-                // read, so rejected data stays recoverable.
+                // read, UMI tag and all, so rejected data stays recoverable.
                 let (r1_out, r2_out) = match context.failed_mode {
                     FailedMode::Original => (
                         MateOutput::borrowed(Span::full(result.r1.original_length)),
@@ -709,8 +765,8 @@ fn route_record<R: BinseqRecord>(
                         )),
                     ),
                     FailedMode::Processed => (
-                        corrected(result.r1.retained, Mate::R1),
-                        corrected(r2_span, Mate::R2),
+                        corrected(&result.r1, Mate::R1),
+                        r2_out(result.r2.as_ref()),
                     ),
                 };
                 push_record(failed, schema, record, r1_out, r2_out)?;
@@ -724,7 +780,7 @@ fn route_record<R: BinseqRecord>(
                     schema.unpaired(),
                     record,
                     Mate::R1,
-                    corrected(result.r1.retained, Mate::R1),
+                    corrected(&result.r1, Mate::R1),
                 )?;
             }
         }
@@ -735,7 +791,7 @@ fn route_record<R: BinseqRecord>(
                     schema.unpaired(),
                     record,
                     Mate::R2,
-                    corrected(r2_span, Mate::R2),
+                    corrected(result.r2.as_ref().expect("orphan R2 implies R2"), Mate::R2),
                 )?;
             }
         }

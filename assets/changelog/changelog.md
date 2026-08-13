@@ -71,6 +71,28 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.0.3 — 2026-08-13
+
+### Added
+
+- **`umi`** — UMI extraction and relocation, matching fastp's `--umi`: the
+  six locations `read1`/`read2`/`index1`/`index2`/`per_index`/`per_read`, a
+  fastp-compatible read-name tag (`--umi-prefix`/`--umi-delimiter`, inserted
+  before the first space of both mate names), and `--umi-skip`. Read-derived
+  UMIs physically remove the prefix; a read shorter than `length + skip` is
+  an explicit error rather than a silently truncated UMI. Also a `[umi]` stage
+  of `workflow`, running **before** correction so a read-head UMI never takes
+  part in overlap inference, adapter matching, trimming or filtering.
+- **`dedup`** — exact whole-dataset deduplication. Two passes: a Bloom
+  discovery pass marks fingerprints that repeat, then an exact classifier
+  re-reads in input order and byte-verifies every candidate, so hash or Bloom
+  collisions can only add work, never drop a record. Parallel decode/hash and
+  encode stages run around a serial ordered classifier, keeping the result
+  exact, deterministic and first-occurrence preserving; memory scales with
+  candidate families rather than unique reads (`--memory-mb`).
+- Benchmarks for both commands (vs fastp `--umi` and `--dedup`) and the
+  matching user-guide and README documentation.
+
 ## 0.0.1 — 2026-08-06
 
 Initial release of `bqc`, a CBQ-native all-in-one QC tool: it decodes a CBQ

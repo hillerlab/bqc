@@ -18,8 +18,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use crate::config::{
     AdapterOptions, Config, CorrectionOptions, FilterOptions, LinkedOptions, Merge, OutputOptions,
     Plan, PolyOptions, QualityCutOptions, ReportFormat, SegmentOptions, Step, TrimOptions,
-    resolve_threads,
+    UmiOptions, resolve_threads,
 };
+use crate::umi::UmiLocation;
 use crate::correct::LogDetail;
 use crate::engine::{Outputs, RunOptions};
 use crate::error::{Error, Result};
@@ -48,6 +49,10 @@ pub enum Command {
     Filter(Box<FilterCommand>),
     /// Correct low-quality bases from the other mate where the pair overlaps.
     Correct(Box<CorrectCommand>),
+    /// Extract and relocate UMI sequences.
+    Umi(Box<UmiCommand>),
+    /// Remove exact duplicate reads (or pairs) across the whole dataset.
+    Dedup(Box<DedupCommand>),
     /// Split reads at internal adapter occurrences into separate records.
     Segment(Box<SegmentCommand>),
     /// Run any combination of the adapter, trim and filter stages in one pass.
@@ -238,6 +243,23 @@ pub struct CorrectCommand {
 }
 
 #[derive(Debug, Args)]
+pub struct UmiCommand {
+    #[command(flatten)]
+    pub common: CommonArgs,
+    #[command(flatten)]
+    pub umi: UmiArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct DedupCommand {
+    #[command(flatten)]
+    pub common: CommonArgs,
+    /// Memory budget in MiB for the Bloom filters and candidate arena.
+    #[arg(long, value_name = "INT")]
+    pub memory_mb: Option<usize>,
+}
+
+#[derive(Debug, Args)]
 pub struct WorkflowCommand {
     #[command(flatten)]
     pub common: CommonArgs,
@@ -249,6 +271,8 @@ pub struct WorkflowCommand {
     pub filter: FilterArgs,
     #[command(flatten)]
     pub correction_args: CorrectionArgs,
+    #[command(flatten)]
+    pub umi: UmiArgs,
 
     /// Stages to run (canonical form, e.g. `correct,adapter,trim,filter`).
     #[arg(long, value_delimiter = ',', value_name = "LIST")]
@@ -573,12 +597,49 @@ impl CorrectionArgs {
     }
 }
 
+#[derive(Debug, Args)]
+pub struct UmiArgs {
+    /// Where the UMI lives: `read1`, `read2`, `index1`, `index2`, `per_index` or `per_read`.
+    #[arg(long, value_enum, value_name = "LOCATION")]
+    pub umi_location: Option<UmiLocation>,
+
+    /// UMI length in bases (required for read-derived UMIs).
+    #[arg(long, value_name = "INT")]
+    pub umi_length: Option<usize>,
+
+    /// Bases to skip after the UMI before the biological sequence.
+    #[arg(long, value_name = "INT")]
+    pub umi_skip: Option<usize>,
+
+    /// Prefix prepended to the UMI in the read name.
+    #[arg(long, value_name = "STR")]
+    pub umi_prefix: Option<String>,
+
+    /// Delimiter inserted before the UMI in the read name [default: ":"].
+    #[arg(long, value_name = "STR")]
+    pub umi_delimiter: Option<String>,
+}
+
+impl UmiArgs {
+    fn options(&self) -> Option<UmiOptions> {
+        let options = UmiOptions {
+            location: self.umi_location,
+            length: self.umi_length,
+            skip: self.umi_skip,
+            prefix: self.umi_prefix.clone(),
+            delimiter: self.umi_delimiter.clone(),
+        };
+        (options != UmiOptions::default()).then_some(options)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum StepArg {
     Correct,
     Adapter,
     Trim,
     Filter,
+    Umi,
 }
 
 impl From<StepArg> for Step {
@@ -588,6 +649,7 @@ impl From<StepArg> for Step {
             StepArg::Adapter => Self::Adapter,
             StepArg::Trim => Self::Trim,
             StepArg::Filter => Self::Filter,
+            StepArg::Umi => Self::Umi,
         }
     }
 }
@@ -898,6 +960,19 @@ impl Cli {
                 require_configured: true,
                 segmenting: false,
             },
+            Command::Umi(command) => Invocation {
+                name: "umi",
+                common: &command.common,
+                config: Config {
+                    threads: command.common.threads,
+                    umi: command.umi.options(),
+                    output: Some(command.common.output_options()?),
+                    ..Config::default()
+                },
+                steps: vec![Step::Umi],
+                require_configured: true,
+                segmenting: false,
+            },
             Command::Segment(command) => Invocation {
                 name: "segment",
                 common: &command.common,
@@ -917,7 +992,9 @@ impl Cli {
             Command::Workflow(command) => return workflow_invocation(command),
             // Sniffing writes no CBQ and compiles no processing plan, so it has
             // no `Invocation`; `run` dispatches it before reaching here.
-            Command::Sniff(_) => unreachable!("sniff is dispatched before invocation()"),
+            Command::Sniff(_) | Command::Dedup(_) => {
+                unreachable!("sniff and dedup are dispatched before invocation()")
+            }
         })
     }
 }
@@ -935,6 +1012,7 @@ fn workflow_invocation(command: &WorkflowCommand) -> Result<Invocation<'_>> {
         trim: command.trim.options()?,
         filter: command.filter.options(),
         correction: command.correction_args.options(command.correction),
+        umi: command.umi.options(),
         segment: None,
         output: Some(command.common.output_options()?),
     };
@@ -954,15 +1032,19 @@ fn workflow_invocation(command: &WorkflowCommand) -> Result<Invocation<'_>> {
             steps.retain(|candidate| *candidate != step);
         }
     }
-    // Correction stays in the requested set even when it is off, so the stage
-    // compiler can still report threshold options given without `--correction`.
-    // It does not, however, count as something to do.
+    // Correction and UMI stay in the requested set even when they are off, so
+    // the stage compiler can still report options given without their switch.
+    // Neither, however, counts as something to do.
     let correcting = config
         .correction
         .as_ref()
         .and_then(|options| options.enabled)
         == Some(true);
-    if steps.iter().all(|step| *step == Step::Correct) && !correcting {
+    let umi_configured = config.umi.as_ref().is_some_and(|options| options.location.is_some());
+    if steps.iter().all(|step| matches!(step, Step::Correct | Step::Umi))
+        && !correcting
+        && !umi_configured
+    {
         return Err(Error::config("every stage was disabled; nothing to do"));
     }
     Ok(Invocation {
@@ -1062,8 +1144,49 @@ pub fn run(cli: &Cli) -> Result<Outcome> {
     if let Command::Sniff(command) = &cli.command {
         return run_sniff(command);
     }
+    // Deduplication is a whole-dataset operation, not a per-record workflow
+    // stage, so it owns its own pipeline.
+    if let Command::Dedup(command) = &cli.command {
+        run_dedup(command)?;
+        return Ok(Outcome::Success);
+    }
     run_processing(cli)?;
     Ok(Outcome::Success)
+}
+
+fn run_dedup(command: &DedupCommand) -> Result<()> {
+    let common = &command.common;
+    let input = CbqInput::open(&common.input)?;
+    let stats = crate::dedup::run(
+        &input,
+        &common.output,
+        &crate::dedup::DedupOptions {
+            memory_mb: command
+                .memory_mb
+                .unwrap_or(crate::dedup::DEFAULT_MEMORY_MB),
+            threads: resolve_threads(common.threads),
+        },
+        common.force,
+    )?;
+    if !common.quiet {
+        let unit = if input.schema().paired { "pairs" } else { "reads" };
+        eprintln!(
+            "Deduplication\n  records:  {:>16} {unit}\n  kept:     {:>16}\n  removed:  {:>16} ({:.2}%)\n  candidates: {:>14}",
+            stats.records_seen,
+            stats.records_kept,
+            stats.duplicates_removed,
+            stats.duplication_rate * 100.0,
+            stats.candidate_families,
+        );
+    }
+    if let Some(report_path) = &common.report {
+        let mut report = TextOutput::create(report_path, &common.input, common.force)?;
+        let mut json = serde_json::to_string_pretty(&stats).unwrap_or_default();
+        json.push('\n');
+        report.write(json.as_bytes())?;
+        report.finish()?;
+    }
+    Ok(())
 }
 
 fn run_sniff(command: &SniffCommand) -> Result<Outcome> {
@@ -1567,7 +1690,7 @@ mod tests {
         let invocation = cli.invocation().unwrap();
         assert_eq!(
             invocation.steps,
-            vec![Step::Correct, Step::Trim, Step::Filter],
+            vec![Step::Correct, Step::Trim, Step::Filter, Step::Umi],
             "--no-adapter removes only the adapter stage"
         );
     }
