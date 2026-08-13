@@ -401,6 +401,56 @@ fn run_parallel(
     }
 }
 
+/// Runs UMI extraction for one record, returning the clipped views and the
+/// outcome needed to translate results back into raw-record coordinates.
+fn extract_umi<'a, R: BinseqRecord>(
+    context: &Context<'_>,
+    record: &'a R,
+    r1: ReadView<'a>,
+    r2: Option<ReadView<'a>>,
+    scratch: &mut Scratch,
+) -> Result<(
+    Option<crate::umi::UmiOutcome>,
+    ReadView<'a>,
+    Option<ReadView<'a>>,
+)> {
+    let Some(stage) = &context.workflow.umi else {
+        return Ok((None, r1, r2));
+    };
+    let outcome = stage.extract(record, r1, r2, &mut scratch.umi)?;
+    let r1 = ReadView::unchecked(
+        &record.sseq()[outcome.r1_clip..],
+        r1.quality.map(|q| &q[outcome.r1_clip..]),
+    );
+    let r2 = r2.map(|view| {
+        ReadView::unchecked(
+            &record.xseq()[outcome.r2_clip..],
+            view.quality.map(|q| &q[outcome.r2_clip..]),
+        )
+    });
+    Ok((Some(outcome), r1, r2))
+}
+
+/// Translates processed lengths back into raw-record space so UMI bases are
+/// counted as input, not as adapter removal.
+fn apply_umi_outcome(
+    result: &mut crate::process::PairResult,
+    outcome: Option<&crate::umi::UmiOutcome>,
+) {
+    let Some(outcome) = outcome else {
+        return;
+    };
+    result.r1.umi_clip = outcome.r1_clip;
+    result.r1.original_length += outcome.r1_clip;
+    result.r1.adapter_trimmed_length += outcome.r1_clip;
+    if let Some(r2) = &mut result.r2 {
+        r2.umi_clip = outcome.r2_clip;
+        r2.original_length += outcome.r2_clip;
+        r2.adapter_trimmed_length += outcome.r2_clip;
+    }
+    result.umi_tagged = true;
+}
+
 /// Decodes one input block, processes its records and re-encodes the results.
 fn process_chunk(
     context: &Context<'_>,
@@ -443,7 +493,7 @@ fn process_chunk(
             continue;
         }
 
-        let mut r1 = ReadView::new(
+        let r1 = ReadView::new(
             record.sseq(),
             if schema.quality {
                 Some(record.squal())
@@ -453,7 +503,7 @@ fn process_chunk(
             index,
             Mate::R1.name(),
         )?;
-        let mut r2 = if schema.paired {
+        let r2 = if schema.paired {
             Some(ReadView::new(
                 record.xseq(),
                 if schema.quality {
@@ -476,41 +526,13 @@ fn process_chunk(
         // UMI extraction runs first: it reads raw sequences and headers, then
         // the clipped views flow through every biological stage so the UMI never
         // participates in correction, overlap, adapter matching or trimming.
-        let umi_outcome = match &context.workflow.umi {
-            Some(stage) => {
-                let outcome = stage.extract(&record, r1, r2, &mut scratch.umi)?;
-                r1 = ReadView::unchecked(
-                    &record.sseq()[outcome.r1_clip..],
-                    r1.quality.map(|q| &q[outcome.r1_clip..]),
-                );
-                r2 = r2.map(|view| {
-                    ReadView::unchecked(
-                        &record.xseq()[outcome.r2_clip..],
-                        view.quality.map(|q| &q[outcome.r2_clip..]),
-                    )
-                });
-                Some(outcome)
-            }
-            None => None,
-        };
+        let (umi_outcome, r1, r2) = extract_umi(context, &record, r1, r2, scratch)?;
 
         let mut result =
             context
                 .workflow
                 .process_corrected(index, r1, r2, &mut scratch.correction)?;
-        // Translate lengths back into raw-record space so the UMI bases are
-        // counted as input, not as adapter removal.
-        if let Some(outcome) = &umi_outcome {
-            result.r1.umi_clip = outcome.r1_clip;
-            result.r1.original_length += outcome.r1_clip;
-            result.r1.adapter_trimmed_length += outcome.r1_clip;
-            if let Some(r2) = &mut result.r2 {
-                r2.umi_clip = outcome.r2_clip;
-                r2.original_length += outcome.r2_clip;
-                r2.adapter_trimmed_length += outcome.r2_clip;
-            }
-            result.umi_tagged = true;
-        }
+        apply_umi_outcome(&mut result, umi_outcome.as_ref());
         chunk.stats.record(&result);
         // Substitution values come from the plan, which holds the pre-mutation
         // bases by construction.

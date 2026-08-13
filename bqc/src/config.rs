@@ -636,11 +636,7 @@ impl Config {
         let mut steps = Vec::new();
         // Resolved before the adapter options are consumed; both stages share it.
         let overlap = overlap_params(adapter.as_ref());
-        let umi_stage = if requested.contains(&Step::Umi) {
-            compile_umi(umi.as_ref(), require_configured, schema)?
-        } else {
-            None
-        };
+        let umi_stage = compile_umi_stage(umi.as_ref(), requested, require_configured, schema)?;
         if umi_stage.is_some() {
             steps.push(Step::Umi);
         }
@@ -959,6 +955,20 @@ fn compile_correction(
     }
     .validate()
     .map(Some)
+}
+
+/// Compiles the UMI stage when it was requested.
+fn compile_umi_stage(
+    umi: Option<&UmiOptions>,
+    requested: &[Step],
+    require_configured: bool,
+    schema: Schema,
+) -> Result<Option<UmiStage>> {
+    if requested.contains(&Step::Umi) {
+        compile_umi(umi, require_configured, schema)
+    } else {
+        Ok(None)
+    }
 }
 
 /// Builds the UMI stage, rejecting inputs it cannot be applied to.
