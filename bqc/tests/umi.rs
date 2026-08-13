@@ -65,7 +65,10 @@ fn umi_read1_clips_sequence_and_tags_the_header() {
     let (_, records) = read_cbq(&output);
     assert_eq!(records[0].s_seq, b"GGGG");
     assert_eq!(records[0].s_qual.as_deref(), Some(&b"IIII"[..]));
-    assert_eq!(records[0].s_header.as_deref(), Some(&b"read_0/1:ACGTACGT"[..]));
+    assert_eq!(
+        records[0].s_header.as_deref(),
+        Some(&b"read_0/1:ACGTACGT"[..])
+    );
 }
 
 #[test]
@@ -101,8 +104,14 @@ fn umi_read2_clips_only_r2_and_tags_both() {
     let (_, records) = read_cbq(&output);
     assert_eq!(records[0].s_seq, b"AAAACCCC");
     assert_eq!(records[0].x_seq.as_deref(), Some(&b"ACGT"[..]));
-    assert_eq!(records[0].s_header.as_deref(), Some(&b"read_0/1:TTTTGGGG"[..]));
-    assert_eq!(records[0].x_header.as_deref(), Some(&b"read_0/2:TTTTGGGG"[..]));
+    assert_eq!(
+        records[0].s_header.as_deref(),
+        Some(&b"read_0/1:TTTTGGGG"[..])
+    );
+    assert_eq!(
+        records[0].x_header.as_deref(),
+        Some(&b"read_0/2:TTTTGGGG"[..])
+    );
 }
 
 #[test]
@@ -193,8 +202,14 @@ fn umi_per_read_clips_both_and_joins_the_tag() {
     let (_, records) = read_cbq(&output);
     assert_eq!(records[0].s_seq, b"GGGG");
     assert_eq!(records[0].x_seq.as_deref(), Some(&b"CCCC"[..]));
-    assert_eq!(records[0].s_header.as_deref(), Some(&b"read_0/1:ACGTACGT_TTTTGGGG"[..]));
-    assert_eq!(records[0].x_header.as_deref(), Some(&b"read_0/2:ACGTACGT_TTTTGGGG"[..]));
+    assert_eq!(
+        records[0].s_header.as_deref(),
+        Some(&b"read_0/1:ACGTACGT_TTTTGGGG"[..])
+    );
+    assert_eq!(
+        records[0].x_header.as_deref(),
+        Some(&b"read_0/2:ACGTACGT_TTTTGGGG"[..])
+    );
 }
 
 #[test]
@@ -221,7 +236,10 @@ fn umi_prefix_and_delimiter_shape_the_tag() {
     .unwrap();
 
     let (_, records) = read_cbq(&output);
-    assert_eq!(records[0].s_header.as_deref(), Some(&b"read_0/1:UMI_ACGTACGT"[..]));
+    assert_eq!(
+        records[0].s_header.as_deref(),
+        Some(&b"read_0/1:UMI_ACGTACGT"[..])
+    );
 }
 
 #[test]

@@ -74,7 +74,12 @@ fn dedup_se_keeps_first_occurrence_unchanged() {
         x_header: None,
         flag: None,
     };
-    write_cbq(&input, se_schema(), &[first.clone(), duplicate, unique.clone()], 512);
+    write_cbq(
+        &input,
+        se_schema(),
+        &[first.clone(), duplicate, unique.clone()],
+        512,
+    );
 
     run(&input, &output);
 

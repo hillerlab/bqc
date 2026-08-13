@@ -119,14 +119,18 @@ impl UmiStage {
         let (r1_clip, r2_clip) = match self.location {
             UmiLocation::Index1 => {
                 let umi = first_index(record.sheader()).ok_or_else(|| {
-                    Error::config(format!("record {index} has no parseable index in its R1 header"))
+                    Error::config(format!(
+                        "record {index} has no parseable index in its R1 header"
+                    ))
                 })?;
                 self.build_tag(&[umi], &mut scratch.tag);
                 (0, 0)
             }
             UmiLocation::Index2 => {
                 let umi = last_index(record.xheader()).ok_or_else(|| {
-                    Error::config(format!("record {index} has no parseable index in its R2 header"))
+                    Error::config(format!(
+                        "record {index} has no parseable index in its R2 header"
+                    ))
                 })?;
                 self.build_tag(&[umi], &mut scratch.tag);
                 (0, 0)
@@ -137,17 +141,22 @@ impl UmiStage {
                 (clip, 0)
             }
             UmiLocation::Read2 => {
-                let r2 = r2.ok_or_else(|| Error::config("read2 UMI requires a paired input file"))?;
+                let r2 =
+                    r2.ok_or_else(|| Error::config("read2 UMI requires a paired input file"))?;
                 let (clip, umi) = read_umi(r2.sequence, self.length, self.skip, index, "R2")?;
                 self.build_tag(&[umi], &mut scratch.tag);
                 (0, clip)
             }
             UmiLocation::PerIndex => {
                 let i1 = first_index(record.sheader()).ok_or_else(|| {
-                    Error::config(format!("record {index} has no parseable index in its R1 header"))
+                    Error::config(format!(
+                        "record {index} has no parseable index in its R1 header"
+                    ))
                 })?;
                 let i2 = last_index(record.xheader()).ok_or_else(|| {
-                    Error::config(format!("record {index} has no parseable index in its R2 header"))
+                    Error::config(format!(
+                        "record {index} has no parseable index in its R2 header"
+                    ))
                 })?;
                 self.build_tag(&[i1, i2], &mut scratch.tag);
                 (0, 0)

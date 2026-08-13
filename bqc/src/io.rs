@@ -301,7 +301,12 @@ impl<'a> MateOutput<'a> {
     }
 
     /// A mate whose bases were corrected, written from `sequence` and `quality`.
-    fn corrected(record_span: Span, scratch_span: Span, sequence: &'a [u8], quality: &'a [u8]) -> Self {
+    fn corrected(
+        record_span: Span,
+        scratch_span: Span,
+        sequence: &'a [u8],
+        quality: &'a [u8],
+    ) -> Self {
         Self {
             span: record_span,
             corrected: Some((sequence, quality, scratch_span)),

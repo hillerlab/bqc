@@ -20,7 +20,6 @@ use crate::config::{
     Plan, PolyOptions, QualityCutOptions, ReportFormat, SegmentOptions, Step, TrimOptions,
     UmiOptions, resolve_threads,
 };
-use crate::umi::UmiLocation;
 use crate::correct::LogDetail;
 use crate::engine::{Outputs, RunOptions};
 use crate::error::{Error, Result};
@@ -30,6 +29,7 @@ use crate::process::{FailedMode, PairPolicy};
 use crate::report::{Report, RunReport};
 use crate::segment::Terminal;
 use crate::sniff::Format;
+use crate::umi::UmiLocation;
 
 /// CBQ-native adapter removal, read trimming and per-read filtering.
 #[derive(Debug, Parser)]
@@ -1040,8 +1040,13 @@ fn workflow_invocation(command: &WorkflowCommand) -> Result<Invocation<'_>> {
         .as_ref()
         .and_then(|options| options.enabled)
         == Some(true);
-    let umi_configured = config.umi.as_ref().is_some_and(|options| options.location.is_some());
-    if steps.iter().all(|step| matches!(step, Step::Correct | Step::Umi))
+    let umi_configured = config
+        .umi
+        .as_ref()
+        .is_some_and(|options| options.location.is_some());
+    if steps
+        .iter()
+        .all(|step| matches!(step, Step::Correct | Step::Umi))
         && !correcting
         && !umi_configured
     {
@@ -1161,15 +1166,17 @@ fn run_dedup(command: &DedupCommand) -> Result<()> {
         &input,
         &common.output,
         &crate::dedup::DedupOptions {
-            memory_mb: command
-                .memory_mb
-                .unwrap_or(crate::dedup::DEFAULT_MEMORY_MB),
+            memory_mb: command.memory_mb.unwrap_or(crate::dedup::DEFAULT_MEMORY_MB),
             threads: resolve_threads(common.threads),
         },
         common.force,
     )?;
     if !common.quiet {
-        let unit = if input.schema().paired { "pairs" } else { "reads" };
+        let unit = if input.schema().paired {
+            "pairs"
+        } else {
+            "reads"
+        };
         eprintln!(
             "Deduplication\n  records:  {:>16} {unit}\n  kept:     {:>16}\n  removed:  {:>16} ({:.2}%)\n  candidates: {:>14}",
             stats.records_seen,

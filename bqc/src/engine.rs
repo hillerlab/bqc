@@ -494,9 +494,10 @@ fn process_chunk(
             None => None,
         };
 
-        let mut result = context
-            .workflow
-            .process_corrected(index, r1, r2, &mut scratch.correction)?;
+        let mut result =
+            context
+                .workflow
+                .process_corrected(index, r1, r2, &mut scratch.correction)?;
         // Translate lengths back into raw-record space so the UMI bases are
         // counted as input, not as adapter removal.
         if let Some(outcome) = &umi_outcome {
@@ -728,19 +729,13 @@ fn route_record<R: BinseqRecord>(
             Mate::R1 => scratch.umi.r1_override(),
             Mate::R2 => scratch.umi.r2_override(),
         });
-        MateOutput::from_scratch(
-            record_span,
-            mate_result.retained,
-            &scratch.correction,
-            mate,
-        )
-        .with_header(header)
+        MateOutput::from_scratch(record_span, mate_result.retained, &scratch.correction, mate)
+            .with_header(header)
     };
     let r2_out = |mate: Option<&crate::process::MateResult>| {
-        mate.map_or(
-            MateOutput::borrowed(Span::full(0)),
-            |mate_result| corrected(mate_result, Mate::R2),
-        )
+        mate.map_or(MateOutput::borrowed(Span::full(0)), |mate_result| {
+            corrected(mate_result, Mate::R2)
+        })
     };
     match result.disposition {
         crate::process::PairDisposition::Accepted => {
@@ -764,10 +759,9 @@ fn route_record<R: BinseqRecord>(
                             result.r2.map_or(0, |mate| mate.original_length),
                         )),
                     ),
-                    FailedMode::Processed => (
-                        corrected(&result.r1, Mate::R1),
-                        r2_out(result.r2.as_ref()),
-                    ),
+                    FailedMode::Processed => {
+                        (corrected(&result.r1, Mate::R1), r2_out(result.r2.as_ref()))
+                    }
                 };
                 push_record(failed, schema, record, r1_out, r2_out)?;
             }

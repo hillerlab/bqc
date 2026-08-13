@@ -53,7 +53,13 @@ pub enum Step {
 }
 
 impl Step {
-    pub const ALL: [Step; 5] = [Step::Correct, Step::Adapter, Step::Trim, Step::Filter, Step::Umi];
+    pub const ALL: [Step; 5] = [
+        Step::Correct,
+        Step::Adapter,
+        Step::Trim,
+        Step::Filter,
+        Step::Umi,
+    ];
 }
 
 /// Structured report format.
@@ -998,7 +1004,12 @@ fn compile_umi(
         length,
         skip: options.skip.unwrap_or(0),
         prefix: options.prefix.as_deref().unwrap_or("").as_bytes().to_vec(),
-        delimiter: options.delimiter.as_deref().unwrap_or(":").as_bytes().to_vec(),
+        delimiter: options
+            .delimiter
+            .as_deref()
+            .unwrap_or(":")
+            .as_bytes()
+            .to_vec(),
     }))
 }
 

@@ -213,7 +213,14 @@ pub fn run(
     // equality and first-occurrence semantics unchanged.
     let mut classifier = Classifier::new(options.memory_mb.max(16).saturating_mul(1024 * 1024));
 
-    let keep = classify(input, schema, &repeated, &mut classifier, threads, &mut stats)?;
+    let keep = classify(
+        input,
+        schema,
+        &repeated,
+        &mut classifier,
+        threads,
+        &mut stats,
+    )?;
     encode(input, output_path, header, schema, &keep, force, threads)?;
 
     if stats.records_seen > 0 {
@@ -440,8 +447,8 @@ fn classify_block(
                 stats.candidate_records += 1;
                 let r1 = &block_hashes.seqs[span.r1_start..span.r1_start + span.r1_len];
                 let r2 = schema.paired.then(|| {
-                    &block_hashes.seqs[span.r1_start + span.r1_len
-                        ..span.r1_start + span.r1_len + span.r2_len]
+                    &block_hashes.seqs
+                        [span.r1_start + span.r1_len..span.r1_start + span.r1_len + span.r2_len]
                 });
                 let duplicate = classifier.is_duplicate(r1, r2, fingerprinted.hash);
                 if duplicate {
@@ -589,11 +596,7 @@ fn fingerprint(r1: &[u8], r2: Option<&[u8]>) -> u64 {
 }
 
 /// Writes one record unchanged, propagating sequence, quality, header and flag.
-fn push_record<R: BinseqRecord>(
-    fragment: &mut Fragment,
-    schema: Schema,
-    record: &R,
-) -> Result<()> {
+fn push_record<R: BinseqRecord>(fragment: &mut Fragment, schema: Schema, record: &R) -> Result<()> {
     io::push_record(
         fragment,
         schema,

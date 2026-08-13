@@ -654,9 +654,15 @@ mod tests {
             qualified_quality: 15,
             ..FilterStage::default()
         };
-        let workflow =
-            Workflow::new(Some(adapter_stage()), None, Some(trim), Some(filter), None, None)
-                .unwrap();
+        let workflow = Workflow::new(
+            Some(adapter_stage()),
+            None,
+            Some(trim),
+            Some(filter),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(workflow.stage_order(), vec!["adapter", "trim", "filter"]);
 
         // 20 bases survive the adapter, then 4 are cut, leaving 16 (< 20).
