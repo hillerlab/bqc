@@ -139,6 +139,10 @@ pub struct Stats {
     pub segment_length_total: u64,
     pub segment_length_min: u64,
     pub segment_length_max: u64,
+    /// Records whose headers received a UMI tag.
+    pub records_tagged: u64,
+    /// Bases removed from the front of each mate by UMI extraction.
+    pub umi_bases_removed: [u64; 2],
 }
 
 /// Adds per-key hit counts, growing `into` to cover keys only `from` has seen.
@@ -261,10 +265,14 @@ impl Stats {
     /// Records one processed record.
     pub fn record(&mut self, result: &PairResult) {
         self.records_in += 1;
+        if result.umi_tagged {
+            self.records_tagged += 1;
+        }
         self.record_correction(result);
         for (mate, mate_result) in result.mates() {
             let index = mate.index();
             self.bases_in[index] += mate_result.original_length as u64;
+            self.umi_bases_removed[index] += mate_result.umi_clip as u64;
 
             let adapter_removed = mate_result.adapter_bases_removed() as u64;
             if adapter_removed > 0 {
@@ -497,6 +505,9 @@ impl Stats {
         self.r1_only_failed += other.r1_only_failed;
         self.r2_only_failed += other.r2_only_failed;
         self.both_failed += other.both_failed;
+        self.records_tagged += other.records_tagged;
+        self.umi_bases_removed[0] += other.umi_bases_removed[0];
+        self.umi_bases_removed[1] += other.umi_bases_removed[1];
     }
 
     /// Total bases read across both mates.
@@ -560,7 +571,7 @@ mod tests {
             qualified_quality: 15,
             ..FilterStage::default()
         };
-        Workflow::new(Some(adapter), None, Some(trim), Some(filter), None).unwrap()
+        Workflow::new(Some(adapter), None, Some(trim), Some(filter), None, None).unwrap()
     }
 
     #[test]
@@ -600,7 +611,7 @@ mod tests {
             qualified_quality: 15,
             ..FilterStage::default()
         };
-        let workflow = Workflow::new(None, None, None, Some(filter), None).unwrap();
+        let workflow = Workflow::new(None, None, None, Some(filter), None, None).unwrap();
         let mut stats = Stats::new(0, 0);
         let long = ReadView::unchecked(b"ACGTACGTACGT", None);
         let short = ReadView::unchecked(b"ACGT", None);

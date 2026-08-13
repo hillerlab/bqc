@@ -30,6 +30,7 @@ use crate::process::{FailedMode, PairPolicy, Workflow};
 use crate::segment::Terminal;
 use crate::sniff::adapters::{AdapterSniff, Params as SniffParams};
 use crate::trim::{MateTrim, PolyParams, QualityCut, TrimStage};
+use crate::umi::{UmiLocation, UmiStage};
 
 /// Default sliding-window width for quality trimming.
 pub const DEFAULT_QUALITY_WINDOW: usize = 4;
@@ -44,6 +45,7 @@ pub enum Step {
     Adapter,
     Trim,
     Filter,
+    Umi,
     /// Internal adapter splitting. Reachable only through the `segment` command,
     /// so it is deliberately absent from [`Step::ALL`] and from `--steps`: it
     /// changes output cardinality and cannot be composed with the rest.
@@ -51,7 +53,13 @@ pub enum Step {
 }
 
 impl Step {
-    pub const ALL: [Step; 4] = [Step::Correct, Step::Adapter, Step::Trim, Step::Filter];
+    pub const ALL: [Step; 5] = [
+        Step::Correct,
+        Step::Adapter,
+        Step::Trim,
+        Step::Filter,
+        Step::Umi,
+    ];
 }
 
 /// Structured report format.
@@ -113,13 +121,14 @@ pub struct Config {
     pub trim: Option<TrimOptions>,
     pub filter: Option<FilterOptions>,
     pub correction: Option<CorrectionOptions>,
+    pub umi: Option<UmiOptions>,
     pub segment: Option<SegmentOptions>,
     pub output: Option<OutputOptions>,
 }
 
 impl_merge!(Config {
     direct: [threads, steps],
-    nested: [adapter, trim, filter, correction, segment, output],
+    nested: [adapter, trim, filter, correction, umi, segment, output],
     primary: [],
 });
 
@@ -486,6 +495,23 @@ impl_merge!(CorrectionOptions {
     primary: [],
 });
 
+/// UMI extraction options.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UmiOptions {
+    pub location: Option<UmiLocation>,
+    pub length: Option<usize>,
+    pub skip: Option<usize>,
+    pub prefix: Option<String>,
+    pub delimiter: Option<String>,
+}
+
+impl_merge!(UmiOptions {
+    direct: [location, length, skip, prefix, delimiter],
+    nested: [],
+    primary: [],
+});
+
 /// Output options.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -602,6 +628,7 @@ impl Config {
             trim,
             filter,
             correction,
+            umi,
             output,
             ..
         } = self;
@@ -609,6 +636,10 @@ impl Config {
         let mut steps = Vec::new();
         // Resolved before the adapter options are consumed; both stages share it.
         let overlap = overlap_params(adapter.as_ref());
+        let umi_stage = compile_umi_stage(umi.as_ref(), requested, require_configured, schema)?;
+        if umi_stage.is_some() {
+            steps.push(Step::Umi);
+        }
         let correction_stage = if requested.contains(&Step::Correct) {
             compile_correction(correction.as_ref(), require_configured, schema)?
         } else {
@@ -660,6 +691,7 @@ impl Config {
             trim_stage,
             filter_stage,
             correction_stage,
+            umi_stage,
         )?
         .with_overlap_params(overlap);
         if workflow.needs_quality() && !schema.quality {
@@ -923,6 +955,72 @@ fn compile_correction(
     }
     .validate()
     .map(Some)
+}
+
+/// Compiles the UMI stage when it was requested.
+fn compile_umi_stage(
+    umi: Option<&UmiOptions>,
+    requested: &[Step],
+    require_configured: bool,
+    schema: Schema,
+) -> Result<Option<UmiStage>> {
+    if requested.contains(&Step::Umi) {
+        compile_umi(umi, require_configured, schema)
+    } else {
+        Ok(None)
+    }
+}
+
+/// Builds the UMI stage, rejecting inputs it cannot be applied to.
+fn compile_umi(
+    options: Option<&UmiOptions>,
+    require_configured: bool,
+    schema: Schema,
+) -> Result<Option<UmiStage>> {
+    let Some(options) = options else {
+        if require_configured {
+            return Err(Error::config(
+                "UMI extraction requires --umi-location (or `[umi] location = ...`)",
+            ));
+        }
+        return Ok(None);
+    };
+    let Some(location) = options.location else {
+        if require_configured {
+            return Err(Error::config(
+                "UMI extraction requires --umi-location (or `[umi] location = ...`)",
+            ));
+        }
+        return Ok(None);
+    };
+    if location.needs_paired() && !schema.paired {
+        return Err(Error::config(format!(
+            "{} UMI requires a paired input file",
+            location.name()
+        )));
+    }
+    if !schema.headers {
+        return Err(Error::config("UMI processing requires stored read headers"));
+    }
+    let length = options.length.unwrap_or(0);
+    if location.removes_sequence() && length == 0 {
+        return Err(Error::config(format!(
+            "{} UMI requires --umi-length > 0",
+            location.name()
+        )));
+    }
+    Ok(Some(UmiStage {
+        location,
+        length,
+        skip: options.skip.unwrap_or(0),
+        prefix: options.prefix.as_deref().unwrap_or("").as_bytes().to_vec(),
+        delimiter: options
+            .delimiter
+            .as_deref()
+            .unwrap_or(":")
+            .as_bytes()
+            .to_vec(),
+    }))
 }
 
 fn compile_adapter(

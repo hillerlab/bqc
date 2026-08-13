@@ -83,6 +83,8 @@ bqc trim      reads.cbq -o out.cbq --quality-tail 20 --trim-terminal-n
 bqc filter    reads.cbq -o out.cbq --min-length 30 --failed rejected.cbq
 bqc correct   pairs.cbq -o out.cbq --correction-log corrections.tsv
 bqc workflow  reads.cbq -o out.cbq --config illumina.toml -T 8
+bqc umi       reads.cbq -o out.cbq --umi-location read1 --umi-length 8
+bqc dedup     reads.cbq -o unique.cbq -T 8
 bqc sniff adapters reads.cbq                              # inspect, never modify
 bqc sniff strand   reads.cbq --index salmon-index         # RNA-seq orientation
 ```
@@ -129,12 +131,13 @@ Every command decodes the input once and writes CBQ back out. The stages of a
 run always execute in this fixed order:
 
 ```text
-correct → adapter → trim → filter
+umi → correct → adapter → trim → filter
 ```
 
 `workflow` runs any combination of these in that single pass. The order is
-part of the output contract: correction runs first so that rescued bases and
-qualities are visible to every later decision.
+part of the output contract: UMI removal runs first so a read-head UMI never
+leaks into correction or trimming, then correction rescues bases from the
+mate so they are visible to every later decision.
 
 ### Guarantees
 
@@ -396,7 +399,7 @@ bqc workflow reads.cbq -o clean.cbq --config illumina.toml -T 8
 ```
 
 ```text
---steps <LIST>       stages to run, e.g. correct,adapter,trim,filter
+--steps <LIST>       stages to run, e.g. umi,correct,adapter,trim,filter
 --no-adapter         skip the adapter stage
 --no-trim            skip the trim stage
 --no-filter          skip the filter stage
@@ -409,7 +412,75 @@ explicitly skipped is requested, but a stage only runs if it is configured —
 so a workflow with just `--min-length 30` runs only the filter stage, and a
 workflow with no stage effectively configured is an error.
 
-### 5.7 `bqc sniff adapters`
+### 5.7 `bqc umi`
+
+Extracts a unique molecular identifier and relocates it into the read name,
+matching fastp's `--umi`. This is extraction/relocation only — **not** UMI
+family clustering, error correction or consensus calling.
+
+```bash
+bqc umi reads.cbq -o umi.cbq --umi-location read1 --umi-length 8
+```
+
+```text
+--umi-location <LOCATION>    read1|read2|index1|index2|per_index|per_read
+--umi-length <INT>           UMI length, required for read-derived UMIs
+--umi-skip <INT>             bases to skip after the UMI [0]
+--umi-prefix <STR>           prefix before the UMI in the name [empty]
+--umi-delimiter <STR>        delimiter before the UMI [":"]
+```
+
+| location | UMI source | sequence modification |
+|---|---|---|
+| `index1` | first index | none |
+| `index2` | second index | none |
+| `read1` | R1 prefix | remove UMI + skip from R1 |
+| `read2` | R2 prefix | remove UMI + skip from R2 |
+| `per_index` | `index1_index2` | none |
+| `per_read` | `r1umi_r2umi` | remove prefixes from both |
+
+The tag is inserted before the first space in the header (appended when there
+is no space) and applied to both mate names. A read shorter than
+`length + skip` is an explicit error — `bqc` never silently truncates a UMI,
+unlike fastp. UMI processing requires stored read headers; `read2`, `index2`,
+`per_index` and `per_read` require paired input.
+
+UMI removal runs **before** correction (it is the first stage of a workflow),
+so a read-head UMI never participates in overlap inference, adapter matching,
+trimming or filtering, and is never credited to adapter removal in the report.
+
+### 5.8 `bqc dedup`
+
+Removes exact duplicate reads across the whole dataset, keeping the earliest
+occurrence unchanged. It is a separate command, not a workflow stage, because
+deduplication needs global cross-block state that would dismantle the
+workflow's single-pass, independent-block property.
+
+```bash
+bqc dedup reads.cbq -o unique.cbq -T 8
+```
+
+```text
+--memory-mb <INT>   memory budget in MiB for the Bloom filters and the exact
+                    candidate arena [1024]
+```
+
+Two records are duplicates when their sequence payloads are byte-for-byte
+equal; qualities, names and flags do not participate. For paired input the
+ordered `(R1, R2)` pair is the key, so `(AC, CGT)` never aliases `(ACC, GT)`.
+
+The pipeline is two passes: a Bloom discovery pass marks fingerprints that
+repeat, then an exact classifier re-reads in input order and verifies each
+candidate against the exact bytes, so hash or Bloom collisions can only add
+work — never drop a record. The result is **exact** (zero false deletions)
+and deterministic. If the candidate arena exceeds the memory budget the run
+aborts rather than silently switching to approximate deletion.
+
+Deduplication operates on the sequences physically present in the input —
+sequence deduplication, not UMI-aware molecular deduplication (that needs
+alignment coordinates and belongs elsewhere).
+
+### 5.9 `bqc sniff adapters`
 
 Infers which adapter sequences contaminate the reads. **Non-destructive**: it
 never trims, filters, reorders or rewrites anything — the input is opened
@@ -504,7 +575,7 @@ r2 = "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"
 `--auto-detect` on the `adapter` command uses the same detector for its
 recommendation instead of a report, so the two can never disagree.
 
-### 5.8 `bqc sniff strand`
+### 5.10 `bqc sniff strand`
 
 Infers RNA-seq library strandedness by mapping reads against a Salmon
 transcriptome index. Strandedness is not a property of the reads on their
@@ -685,7 +756,7 @@ commands take their options on the command line only.
 
 ```toml
 threads = 8
-steps = ["adapter", "trim", "filter"]   # optional; --no-* refines the default
+steps = ["umi", "adapter", "trim", "filter"]   # optional; --no-* refines the default
 
 [adapter]
 r1 = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"
@@ -711,6 +782,13 @@ min_length = 30
 max_n = 5
 qualified_quality = 15
 max_unqualified_fraction = 0.40
+
+[umi]
+location = "read1"
+length = 8
+skip = 0
+prefix = "UMI"
+delimiter = ":"
 
 [correction]
 enabled = true

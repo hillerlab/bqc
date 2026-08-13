@@ -60,7 +60,7 @@ cmd_for() {  # cmd_for TOOL R1 R2 CBQ WD -> the tool's command line
 bench() {  # bench NAME TOOL R1 R2 CBQ RSS[0|1]
     local name="$1" tool="$2" r1="$3" r2="$4" cbq="$5" rss_extra="${6:-0}"
     local wd="$RESULTS/$name.$tool.work" json="$RESULTS/$name.$tool.json"
-    # ponytail: trimmomatic 0.41 has an intermittent FastqRecord threading
+    # trimmomatic 0.41 has an intermittent FastqRecord threading
     # race (crashes mid-write, exit 1); retry — every other tool is
     # deterministic and only ever needs its one attempt.
     local attempt ok=0
@@ -75,7 +75,7 @@ bench() {  # bench NAME TOOL R1 R2 CBQ RSS[0|1]
     done
     if [ "$ok" = 1 ]; then
         if [ "$tool" = bqc ]; then
-            # ponytail: bqtools decode crashes on a valid-but-empty CBQ (all
+            # bqtools decode crashes on a valid-but-empty CBQ (all
             # reads rejected, e.g. dimer); emit zero metrics instead.
             if bqtools decode "$wd/out.cbq" --prefix "$wd/out" -f q 2>"$wd/decode.err"; then
                 python3 "$HERE/metrics.py" one --tag "$name.bqc" \
@@ -122,12 +122,12 @@ make_data() {
 }
 
 run_real() {
-    # ponytail: bare `return` would propagate the failed test's status and
+    # bare `return` would propagate the failed test's status and
     # set -e would kill the script — return 0 explicitly.
     [ "$P_REAL" -gt 0 ] || return 0
     local real=/home/alejandro/Documents/projects/pipelines/big_samples/SRR8997011
     local r1="$DATA/real_R1.fq" r2="$DATA/real_R2.fq"
-    # ponytail: { zcat || true; } | head -N — with pipefail, head closing the
+    # { zcat || true; } | head -N — with pipefail, head closing the
     # pipe SIGPIPEs zcat and set -e kills the run (data is complete though);
     # piping through gzip would also leave a footerless stream. Plain text
     # has no wrapper to corrupt; all tools read plain FASTQ.

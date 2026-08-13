@@ -260,6 +260,82 @@ out ⇒ `—`.
 - `alln`: fastp and trimmomatic drop all-N reads outright; bqc,
   cutadapt, and atropos keep them (documented per-tool policy, not a bug).
 
+
+## UMI and deduplication
+
+A focused benchmark for the two features without an ecosystem analog in the
+parity config above: UMI extraction/relocation and exact deduplication.
+Single-end synthetic data (2M reads, 150 bp, fixed seed, all-Q40 qualities)
+so the comparison isolates the operation itself. Same environment as above
+(Ryzen 7 5700X, 8 threads; fastp 1.0.1 via env `fastp`; bqc this tree).
+
+### Data
+
+`bench/scripts/gen_umidedup.py` (stdlib-only, fixed seed) writes one FASTQ per
+scenario; `bqtools encode -m cbq` produces the CBQ bqc reads.
+
+| dataset | reads | contents |
+|---|---|---|
+| `umi` | 2M | 8 bp random read1 UMI prefix + 142 bp insert |
+| `dedup_0` … `dedup_90` | 2M | 150 bp reads tiled from a unique pool to the named duplication rate (0/1/10/50/90%) |
+
+### Protocol
+
+```bash
+# UMI (read1, 8 bp)
+bqc umi in.cbq -o out.cbq -T 8 --umi-location read1 --umi-length 8
+fastp -i in.fq -o out.fq --umi --umi_loc read1 --umi_len 8 -w 8 \
+    --disable_adapter_trimming --disable_trim_poly_g \
+    --disable_quality_filtering --disable_length_filtering \
+    --dont_eval_duplication
+
+# Dedup
+bqc dedup in.cbq -o out.cbq -T 8
+fastp -i in.fq -o out.fq --dedup -w 8 \
+    --disable_adapter_trimming --disable_trim_poly_g \
+    --disable_quality_filtering --disable_length_filtering
+```
+
+Timing is `hyperfine --runs 3` (median) with peak RSS from a single
+`/usr/bin/time -v` pass. fastp dedup runs at its default accuracy level 3 (a
+fixed 4 GB Bloom); bqc at its default `--memory-mb 1024`.
+
+### Results
+
+#### UMI (8 bp read1, 2M reads)
+
+| tool | wall s | RSS MB |
+|---|---|---|
+| bqc | **0.48** | 100 |
+| fastp | 1.32 | 80 |
+
+#### Dedup (2M reads)
+
+| dup rate | bqc wall s | bqc RSS MB | fastp wall s | fastp RSS MB |
+|---|---|---|---|---|
+| 0% | 1.05 | 612 | 3.21 | 4204 |
+| 1% | 1.07 | 691 | 3.32 | 4200 |
+| 10% | 1.36 | 1078 | 3.43 | 4194 |
+| 50% | 2.09 | 1473 | 3.61 | 4192 |
+| 90% | 1.13 | 964 | 3.11 | 4181 |
+
+Two differences follow directly from the designs:
+
+* **Memory scales with candidate families.** bqc's two-Bloom + exact-arena
+  design holds only the repeated families (612 MB at 0% duplication — the
+  Bloom alone; 1.47 GB at 50% — 1M families in the arena). fastp pins 4.2 GB
+  regardless of duplication. bqc's peak is a third of fastp's floor.
+* **Exact vs approximate.** fastp's dedup is a Bloom filter and can delete a
+  unique read on a hash collision; bqc verifies every candidate against exact
+  bytes.
+
+| rate | bqc removed | fastp removed | fastp false deletions |
+|---|---|---|---|
+| 10% | 200,000 | 200,168 | 168 |
+| 50% | 1,000,000 | 1,000,065 | 65 |
+
+bqc hits the exact count; fastp silently drops a few extra unique reads.
+
 ## Limitations
 
 - bqc reads CBQ and writes CBQ; FASTQ tools read plain FASTQ (the real

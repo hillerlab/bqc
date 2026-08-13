@@ -36,7 +36,7 @@
 //!     AdapterParams::default(),
 //!     None,
 //! )?;
-//! let workflow = Workflow::new(Some(stage), None, None, None, None)?;
+//! let workflow = Workflow::new(Some(stage), None, None, None, None, None)?;
 //!
 //! let sequence = b"ACGTACGTACGTACGTAGATCGGAAGAGC";
 //! let read = ReadView::new(sequence, None, 0, "R1")?;
@@ -49,6 +49,7 @@ pub mod adapter;
 pub mod cli;
 pub mod config;
 pub mod correct;
+pub mod dedup;
 pub mod detect;
 pub mod engine;
 pub mod error;
@@ -63,5 +64,6 @@ pub mod segment;
 pub mod sniff;
 pub mod stats;
 pub mod trim;
+pub mod umi;
 
 pub use error::{Error, Result};

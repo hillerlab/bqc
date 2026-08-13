@@ -68,7 +68,7 @@
 
 <p align="center">
   <samp>
-    <span>removes adapter sequences, trims and filters sequencing </span>
+    <span>removes adapter sequences, trims, deduplicates, extracts UMIs, and filters sequencing </span>
     <br>
     <span>
       reads stored in <a href="https://docs.rs/binseq">CBQ</a> files. It works natively on CBQ: no FASTQ conversion,
@@ -84,7 +84,7 @@
 > - 📄 <mark>**CBQ-native**</mark>: reads CBQ directly.
 > - ⚡<mark>~ 4-8x faster</mark> than the field on typical data (fastp, cutadapt, atropos, trimmomatic), with 📉 <mark>~90% less memory</mark>.
 > - 🧬 <mark>**Reference-free sniff adapters**</mark> (curated 234-known adapters) and 👃 <mark>**sniff strandeness**</mark> for RNA against a Salmon index (given or produced on-the-fly through `--transcriptome <PATH>`).
-> - 🔄 <mark>**Everything in one pass**</mark>: 3' adapter removal (incl. `--allow-indels`), quality/positional/homopolymer trim, polyA/G tails, overlap error correction from the mate, internal-adapter split, filtering — configurable.
+> - 🔄 <mark>**Everything in one pass**</mark>: 3' adapter removal (incl. `--allow-indels`), quality/positional/homopolymer trim, polyA/G tails, overlap error correction from the mate, internal-adapter split, UMI extraction, filtering — configurable.
 > - 🔒 Deterministic + <mark>safe</mark>: single static binary
 
 ---
@@ -127,5 +127,21 @@ See [bench.md](assets/bench/bench.md) for full details.
 | real | cutadapt | 3.08 | 51 | 1,964,259 | 196.2 | 99.7 | 1,964,259 | 0.0 |
 | real | atropos | 15.43 | 62 | 1,964,259 | 196.2 | 99.7 | 1,964,259 | 0.0 |
 | real | trimmomatic | 7.72 | 1149 | 1,921,288 / 1,863,229 | 188.1 / 181.4 | 97.6 | 1,827,052 | 0.0 |
+
+</div>
+
+### UMI and deduplication (2M SE reads, 150 bp, 8 threads)
+
+<div align="center">
+
+| op | bqc wall s | bqc RSS MB | fastp wall s | fastp RSS MB |
+|---|---|---|---|---|
+| UMI (8 bp read1) | **0.48** | 100 | 1.32 | 80 |
+| dedup 0% | **1.05** | 612 | 3.21 | 4204 |
+| dedup 50% | **2.09** | 1473 | 3.61 | 4192 |
+
+bqc dedup is **exact**; fastp's Bloom filter over-deletes (~65–168 unique reads
+at 10–50% duplication) and pins 4.2 GB regardless of duplication, while bqc
+memory scales with candidate families (612 MB → 1.47 GB).
 
 </div>
