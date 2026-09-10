@@ -1,21 +1,22 @@
 // Copyright (c) 2026 The Hiller Lab at the Senckenberg Gesellschaft für Naturforschung
 // Distributed under the terms of the GNU General Public License, Version 3.0.
 
-//! `bqc sniff` — non-destructive inspection of a CBQ file.
+//! `bqc sniff` — non-destructive inspection of a CBQ file, plus index prep.
 //!
-//! Sniffing never trims, filters, reorders or rewrites anything. It samples a
-//! deterministic subset of the input, infers a property from it, and writes a
-//! report. The input file is opened read-only and is byte-identical afterwards.
-//!
-//! Two subcommands share the sampling, execution and report conventions and
-//! nothing else, because their evidence has nothing in common:
+//! `adapters` and `strand` never trim, filter, reorder or rewrite anything.
+//! They sample a deterministic subset of the input, infer a property from it,
+//! and write a report. The input file is opened read-only and is byte-identical
+//! afterwards.
 //!
 //! ```text
 //! sniff adapters   reference-free, sequence tails      -> candidate adapters
+//! sniff index      transcriptome FASTA                 -> reusable Salmon index
 //! sniff strand     needs a transcriptome, mappings     -> library orientation
 //! ```
 //!
-//! Both may return an inconclusive answer, and both say so rather than guessing.
+//! `index` does not inspect a CBQ: it exists so `strand` can reuse a reference
+//! instead of rebuilding one on every run. `adapters` and `strand` may return
+//! an inconclusive answer, and both say so rather than guessing.
 //! `--require-confident` turns an inconclusive answer into a distinct exit code
 //! so a pipeline can branch on it without parsing text.
 

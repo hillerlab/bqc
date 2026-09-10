@@ -83,7 +83,7 @@
 > [!IMPORTANT]
 > - 📄 <mark>**CBQ-native**</mark>: reads CBQ directly.
 > - ⚡<mark>~ 4-8x faster</mark> than the field on typical data (fastp, cutadapt, atropos, trimmomatic), with 📉 <mark>~90% less memory</mark>.
-> - 🧬 <mark>**Reference-free sniff adapters**</mark> (curated 234-known adapters) and 👃 <mark>**sniff strandeness**</mark> for RNA against a Salmon index (given or produced on-the-fly through `--transcriptome <PATH>`).
+> - 🧬 <mark>**Reference-free sniff adapters**</mark> (curated 234-known adapters) and 👃 <mark>**sniff strandeness**</mark> for RNA against a Salmon index (`bqc sniff index --sequence tx.fa`, or on-the-fly through `--transcriptome <PATH>`).
 > - 🔄 <mark>**Everything in one pass**</mark>: 3' adapter removal (incl. `--allow-indels`), quality/positional/homopolymer trim, polyA/G tails, overlap error correction from the mate, internal-adapter split, UMI extraction, filtering — configurable.
 > - 🔒 Deterministic + <mark>safe</mark>: single static binary
 

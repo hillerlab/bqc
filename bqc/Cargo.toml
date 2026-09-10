@@ -1,6 +1,6 @@
 [package]
 name = "bqc"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 description = "CBQ-native all-in-one quality control tool"
 license = "MIT"
@@ -13,10 +13,11 @@ rust-version = "1.91"
 
 [features]
 default = []
-# `bqc sniff strand`. Opt-in: the Salmon mapper pulls in roughly 330 crates
-# and needs a C compiler, which is a large cost to impose on every build for one
-# subcommand. This gates optional compilation, not a choice of backend — there
-# is one implementation, and no subprocess or FASTQ fallback exists.
+# `bqc sniff strand` and `bqc sniff index`. Opt-in: the Salmon mapper pulls in
+# roughly 330 crates and needs a C compiler, which is a large cost to impose on
+# every build for one pair of subcommands. This gates optional compilation, not
+# a choice of backend — there is one implementation, and no subprocess or FASTQ
+# fallback exists.
 sniff-strand = [
     "dep:piscem-rs",
     "dep:salmon-core",

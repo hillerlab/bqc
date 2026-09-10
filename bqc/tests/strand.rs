@@ -47,15 +47,15 @@ fn revcomp(sequence: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// A small transcriptome and an index built from it.
+/// A small transcriptome and, optionally, an index built from it.
 struct Reference {
     dir: TempDir,
     transcripts: Vec<Vec<u8>>,
 }
 
 impl Reference {
-    /// Builds a Salmon index in-process. No `salmon` binary is involved.
-    fn build() -> Self {
+    /// Writes a transcriptome FASTA. No index.
+    fn with_fasta() -> Self {
         use std::fmt::Write as _;
         let dir = tempfile::tempdir().expect("tempdir");
         let transcripts: Vec<Vec<u8>> = (0..8).map(|i| transcript(0x7A01 + i * 2, 2000)).collect();
@@ -68,12 +68,17 @@ impl Reference {
             text.push('\n');
         }
         std::fs::write(&fasta, text).expect("write transcriptome");
+        Self { dir, transcripts }
+    }
 
-        let index_dir = dir.path().join("index");
-        let mut options = salmon_index::IndexBuildOptions::new(vec![fasta], index_dir);
+    /// Builds a Salmon index in-process. No `salmon` binary is involved.
+    fn build() -> Self {
+        let this = Self::with_fasta();
+        let mut options =
+            salmon_index::IndexBuildOptions::new(vec![this.transcriptome()], this.index());
         options.threads = 2;
         salmon_index::build(&options).expect("build a salmon index");
-        Self { dir, transcripts }
+        this
     }
 
     fn index(&self) -> PathBuf {
@@ -397,4 +402,134 @@ fn a_transcriptome_builds_the_index_on_the_fly() {
         "100",
     ])
     .expect("sniff strand runs with a transcriptome");
+}
+
+#[test]
+fn sniff_index_writes_a_reusable_index() {
+    let reference = Reference::with_fasta();
+    let records = reference.pairs(2000, true, PAIRED);
+    let input = reference.path("reads.cbq");
+    write_cbq(&input, PAIRED, &records, BLOCK);
+
+    bqc(&[
+        "sniff",
+        "index",
+        "--sequence",
+        reference.transcriptome().to_str().unwrap(),
+        "-T",
+        "2",
+    ])
+    .expect("sniff index runs");
+
+    let index = reference.path("transcripts.index");
+    assert!(index.is_dir(), "index directory was not published");
+    assert!(
+        !leftover_tmp(&reference),
+        "temporary index directory left behind"
+    );
+
+    let out = reference.path("strand.json");
+    bqc(&[
+        "sniff",
+        "strand",
+        input.to_str().unwrap(),
+        "--index",
+        index.to_str().unwrap(),
+        "--min-informative",
+        "100",
+        "--format",
+        "json",
+        "-o",
+        out.to_str().unwrap(),
+    ])
+    .expect("sniff strand runs against the published index");
+
+    let result = &json(&out)["result"];
+    assert_eq!(result["salmon_library_type"], "ISR", "{result}");
+    assert_eq!(result["strandedness"], "reverse", "{result}");
+}
+
+#[test]
+fn sniff_index_respects_output_directory_and_prefix() {
+    let reference = Reference::with_fasta();
+    let outdir = reference.path("indexes");
+    bqc(&[
+        "sniff",
+        "index",
+        "--sequence",
+        reference.transcriptome().to_str().unwrap(),
+        "--output-directory",
+        outdir.to_str().unwrap(),
+        "--prefix",
+        "hg38",
+        "-T",
+        "2",
+    ])
+    .expect("sniff index runs");
+    assert!(outdir.join("hg38").is_dir());
+    assert!(!reference.path("transcripts.index").exists());
+}
+
+#[test]
+fn sniff_index_refuses_to_overwrite_without_force() {
+    let reference = Reference::with_fasta();
+    let dest = reference.path("transcripts.index");
+    std::fs::create_dir(&dest).expect("mkdir");
+    std::fs::write(dest.join("marker"), b"keep").expect("marker");
+
+    let error = bqc(&[
+        "sniff",
+        "index",
+        "--sequence",
+        reference.transcriptome().to_str().unwrap(),
+    ])
+    .expect_err("existing index is refused");
+    assert!(
+        format!("{error}").contains("refusing to overwrite"),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read(dest.join("marker")).expect("marker survived"),
+        b"keep"
+    );
+
+    bqc(&[
+        "sniff",
+        "index",
+        "--sequence",
+        reference.transcriptome().to_str().unwrap(),
+        "--force",
+        "-T",
+        "2",
+    ])
+    .expect("sniff index --force replaces the directory");
+    assert!(dest.is_dir());
+    assert!(!dest.join("marker").exists(), "old index contents survived");
+}
+
+#[test]
+fn sniff_index_missing_fasta_is_a_config_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let missing = dir.path().join("no-such.fa");
+    let error = bqc(&["sniff", "index", "--sequence", missing.to_str().unwrap()])
+        .expect_err("missing FASTA is refused");
+    let text = format!("{error}");
+    assert!(text.contains("is not a file"), "{error}");
+}
+
+#[test]
+fn sniff_index_rejects_a_prefix_that_is_a_path() {
+    let error = bqc(&["sniff", "index", "--sequence", "tx.fa", "--prefix", "a/b"])
+        .expect_err("prefix is not a path");
+    assert!(
+        format!("{error}").contains("--prefix is a directory name"),
+        "{error}"
+    );
+}
+
+fn leftover_tmp(reference: &Reference) -> bool {
+    std::fs::read_dir(reference.dir.path())
+        .expect("list reference dir")
+        .filter_map(Result::ok)
+        .any(|entry| entry.file_name().to_string_lossy().contains(".bqc-tmp-"))
 }

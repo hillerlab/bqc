@@ -71,6 +71,18 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.0.4 — 2026-09-10
+
+### Added
+
+- **`sniff index`** — builds a reusable Salmon 2.x transcriptome index from
+  a FASTA (plain or gzipped) for `sniff strand --index`. Default destination
+  is `<stem>.index` beside the FASTA; `--output-directory` and `--prefix`
+  override location and name. `--force` replaces an existing directory;
+  without it an existing dest is refused before the build. Same optional
+  `sniff-strand` feature as `sniff strand`. `--transcriptome` on `sniff
+  strand` remains the throwaway one-shot.
+
 ## 0.0.3 — 2026-08-13
 
 ### Added

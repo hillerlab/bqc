@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "bqc"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "binseq",
  "bitflags 2.13.1",
