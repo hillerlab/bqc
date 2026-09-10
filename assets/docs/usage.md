@@ -86,6 +86,7 @@ bqc workflow  reads.cbq -o out.cbq --config illumina.toml -T 8
 bqc umi       reads.cbq -o out.cbq --umi-location read1 --umi-length 8
 bqc dedup     reads.cbq -o unique.cbq -T 8
 bqc sniff adapters reads.cbq                              # inspect, never modify
+bqc sniff index    --sequence transcripts.fa              # reusable Salmon index
 bqc sniff strand   reads.cbq --index salmon-index         # RNA-seq orientation
 ```
 
@@ -98,8 +99,8 @@ dataset-level QC reports; `bqc` itself only reads and writes CBQ.
 cargo install bqc
 ```
 
-`bqc sniff strand` is optional and off by default — its mapping engine
-pulls in a large dependency tree and needs a C compiler:
+`bqc sniff strand` and `bqc sniff index` are optional and off by default —
+the Salmon mapper pulls in a large dependency tree and needs a C compiler:
 
 ```bash
 cargo install bqc --features sniff-strand
@@ -605,10 +606,9 @@ bqc sniff strand reads.cbq --transcriptome transcripts.fa   # index built on the
 `--index` and `--transcriptome` are mutually exclusive; exactly one is
 required. **`--transcriptome`** takes a transcriptome FASTA instead of a ready
 index and builds a Salmon index from it on the fly in a temporary directory,
-discarded when the run ends. There is no persistent index cache — the index is
-rebuilt on every run — so reach for `--index` when the same reference is used
-repeatedly. The file must exist and be a FASTA; a missing path is a
-configuration error.
+discarded when the run ends. For a reusable index, run `bqc sniff index`
+once and pass the directory to `--index`. The file must exist and be a FASTA;
+a missing path is a configuration error.
 
 Two related results are reported:
 
@@ -666,10 +666,39 @@ The report also records index provenance — reference count, k-mer length,
 decoy state and content hashes — so a result can be matched back to the
 index that produced it.
 
+### 5.11 `bqc sniff index`
+
+Builds a reusable Salmon 2.x transcriptome index from a FASTA (plain or
+gzipped). Same feature as `sniff strand`. The output is a directory, suitable
+as `bqc sniff strand --index`.
+
+```bash
+bqc sniff index --sequence transcripts.fa
+bqc sniff index --sequence transcripts.fa.gz --output-directory /idx --prefix hg38
+idx=$(bqc sniff index --sequence transcripts.fa)
+bqc sniff strand reads.cbq --index "$idx"
+```
+
+```text
+--sequence <FASTA>             transcriptome FASTA, optionally gzipped
+--output-directory <PATH>      parent directory of the index [FASTA's directory]
+--prefix <NAME>                index directory name [<fasta-stem>.index]
+-T, --threads <INT>            worker threads; 0 uses every core
+--force                        replace an existing index directory
+```
+
+Default name: strip a trailing `.gz`, then `.fa` / `.fasta` / `.fna`
+(any case), and append `.index`. `--prefix` is that last path component as
+given — it does not add `.index`. It is a name, not a path; use
+`--output-directory` to choose the location. The destination path is printed
+to stdout. Without `--force`, an existing directory is refused before the
+index is built.
+
 ## 6. Sniff reports
 
-Both sniff commands accept `--format text` (default), `json` or `tsv`, and
-`-o` writes the report atomically (stdout otherwise).
+`sniff adapters` and `sniff strand` accept `--format text` (default), `json`
+or `tsv`, and `-o` writes the report atomically (stdout otherwise). `sniff
+index` prints the index directory path to stdout and has no report.
 
 * **JSON** is the stable pipeline interface. It carries a `schema_version`
   and a common envelope: `tool`, `input` (path, records, schema flags),
@@ -818,6 +847,7 @@ cardinality.
 bqc sniff adapters sample.cbq --require-confident \
     --emit-config sample.adapters.toml --format json -o sample.adapters.json
 # 2. Is the library stranded? (needs a Salmon index)
+bqc sniff index --sequence transcripts.fa --prefix reference.salmon
 bqc sniff strand sample.cbq --index reference.salmon \
     --require-confident --format json -o sample.strand.json
 # 3. Clean the data in one pass using the detected adapters.

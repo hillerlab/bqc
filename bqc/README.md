@@ -14,6 +14,7 @@ bqc filter    reads.cbq -o out.cbq --min-length 30 --failed rejected.cbq
 bqc correct   pairs.cbq -o out.cbq --correction-log corrections.tsv
 bqc workflow  reads.cbq -o out.cbq --config illumina.toml -T 8
 bqc sniff adapters reads.cbq                              # inspect, never modify
+bqc sniff index    --sequence transcripts.fa              # reusable Salmon index
 bqc sniff strand   reads.cbq --index salmon-index         # RNA-seq orientation
 ```
 
@@ -31,6 +32,7 @@ bqc sniff strand   reads.cbq --index salmon-index         # RNA-seq orientation
 | Split reads at internal adapters into separate records | `bqc segment` |
 | All of the above fused into one pass          | `bqc workflow`  |
 | Non-destructive inspection: which adapters are in this file? | `bqc sniff adapters` |
+| Reusable Salmon transcriptome index from a FASTA | `bqc sniff index` |
 | RNA-seq library strandedness, against a transcriptome | `bqc sniff strand` |
 
 `bqtools qc` describes a dataset; `bqc filter` decides whether an individual
@@ -303,9 +305,11 @@ three_prime = "GGATCCTAAGCC"
 
 ## Sniffing
 
-`bqc sniff` inspects a file without changing it. It never trims, filters,
-reorders or rewrites anything; the input is opened read-only and is
-byte-identical afterwards.
+`bqc sniff adapters` and `bqc sniff strand` inspect a file without changing
+it. They never trim, filter, reorder or rewrite anything; the input is opened
+read-only and is byte-identical afterwards. `bqc sniff index` builds a reusable
+Salmon transcriptome index from a FASTA so `sniff strand --index` does not
+rebuild one on every run.
 
 ```bash
 bqc sniff adapters reads.cbq                       # human-readable summary
@@ -430,6 +434,7 @@ bqc workflow sample.cbq --config sample.toml -o sample.clean.cbq
 ### Strandedness
 
 ```bash
+bqc sniff index --sequence transcripts.fa                 # reusable index
 bqc sniff strand reads.cbq --index salmon-index --format json -o strand.json
 ```
 
@@ -477,10 +482,12 @@ Pair orientation is reported as measured. An outward or matching library is
 surfaced with a warning rather than collapsed into inward, because that is
 exactly the finding worth seeing.
 
-**The index must be a Salmon 2.x index.** An index built by salmon 1.x uses the
-pufferfish format and cannot be read; `bqc` says so and gives the rebuild
-command. Its reference count, k, decoy state and content hashes are recorded with
-the result, so a report can be matched back to the index that produced it.
+**The index must be a Salmon 2.x index.** `bqc sniff index --sequence tx.fa`
+builds one. An index built by salmon 1.x uses the pufferfish format and cannot
+be read; `bqc` says so and gives the rebuild command. `--transcriptome` on
+`sniff strand` still builds a throwaway index for a one-shot run. Its reference
+count, k, decoy state and content hashes are recorded with the result, so a
+report can be matched back to the index that produced it.
 
 Sampling stops at a batch boundary once `--target-informative` (50000)
 observations have accumulated, so a high mapping rate does not cost a full pass —

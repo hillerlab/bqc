@@ -379,28 +379,25 @@ fn load_index(path: &std::path::Path) -> Result<SalmonIndex> {
     })
 }
 
-/// Builds a Salmon index from a transcriptome FASTA into a fresh temp dir and
-/// returns that dir's path, ready for [`load_index`]. The index stays alive for
-/// the process and OS temp cleanup removes it afterwards.
-// : no persistent index cache — rebuilt every run; cache on
-// transcriptome path+mtime when build time starts to matter.
-pub fn build_temp_index(
+/// Builds a Salmon index from a transcriptome FASTA into `output`.
+///
+/// Gzipped FASTA is accepted: `salmon_index` reads through needletail.
+/// Persistent indexes are `bqc sniff index`; this is the shared builder.
+pub fn build_index(
     transcriptome: &std::path::Path,
+    output: &std::path::Path,
     threads: usize,
-) -> Result<std::path::PathBuf> {
+) -> Result<()> {
     if !transcriptome.is_file() {
         return Err(Error::config(format!(
-            "--transcriptome {} is not a file; give a transcriptome FASTA",
+            "{} is not a file; give a transcriptome FASTA",
             transcriptome.display()
         )));
     }
-    let output = std::env::temp_dir().join(format!(
-        "bqc-strand-{}-{:x}",
-        std::process::id(),
-        now_unique()
-    ));
-    let mut options =
-        salmon_index::IndexBuildOptions::new(vec![transcriptome.to_path_buf()], output.clone());
+    let mut options = salmon_index::IndexBuildOptions::new(
+        vec![transcriptome.to_path_buf()],
+        output.to_path_buf(),
+    );
     options.threads = threads;
     salmon_index::build(&options).map_err(|error| {
         Error::config(format!(
@@ -408,6 +405,22 @@ pub fn build_temp_index(
             transcriptome.display()
         ))
     })?;
+    Ok(())
+}
+
+/// Builds a Salmon index into a fresh temp dir for one `sniff strand` run.
+/// Reuse [`build_index`] via `bqc sniff index` when the same reference is
+/// needed more than once.
+pub fn build_temp_index(
+    transcriptome: &std::path::Path,
+    threads: usize,
+) -> Result<std::path::PathBuf> {
+    let output = std::env::temp_dir().join(format!(
+        "bqc-strand-{}-{:x}",
+        std::process::id(),
+        now_unique()
+    ));
+    build_index(transcriptome, &output, threads)?;
     Ok(output)
 }
 

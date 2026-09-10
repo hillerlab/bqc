@@ -10,6 +10,8 @@
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "sniff-strand")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "sniff-strand")]
 use clap::ArgGroup;
@@ -61,12 +63,13 @@ pub enum Command {
     Sniff(Box<SniffCommand>),
 }
 
-/// Non-destructive inspection.
+/// Non-destructive inspection, plus Salmon index prep for `sniff strand`.
 ///
 /// These are subcommands rather than flags on one command because their inputs
-/// differ: adapter discovery is reference-free and works on any library, while
+/// differ: adapter discovery is reference-free and works on any library,
 /// strandedness needs a transcriptome (or its index) and only means anything
-/// for RNA.
+/// for RNA, and `index` builds that transcriptome index without inspecting a
+/// CBQ.
 #[derive(Debug, Args)]
 pub struct SniffCommand {
     #[command(subcommand)]
@@ -77,9 +80,36 @@ pub struct SniffCommand {
 pub enum SniffKind {
     /// Infer which adapter sequences contaminate the reads.
     Adapters(Box<SniffAdaptersCommand>),
+    /// Build a reusable Salmon transcriptome index from a FASTA.
+    #[cfg(feature = "sniff-strand")]
+    Index(Box<SniffIndexCommand>),
     /// Infer RNA-seq library strandedness against a Salmon transcriptome index.
     #[cfg(feature = "sniff-strand")]
     Strand(Box<SniffStrandCommand>),
+}
+
+#[cfg(feature = "sniff-strand")]
+#[derive(Debug, Args)]
+pub struct SniffIndexCommand {
+    /// Transcriptome FASTA, optionally gzipped.
+    #[arg(long, value_name = "FASTA")]
+    pub sequence: PathBuf,
+
+    /// Directory the index is written into. Defaults to the FASTA's directory.
+    #[arg(long, value_name = "PATH")]
+    pub output_directory: Option<PathBuf>,
+
+    /// Index directory name. Defaults to <fasta-stem>.index.
+    #[arg(long, value_name = "NAME")]
+    pub prefix: Option<String>,
+
+    /// Worker threads; 0 uses every available core.
+    #[arg(short = 'T', long, value_name = "INT")]
+    pub threads: Option<usize>,
+
+    /// Replace an existing index directory.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[cfg(feature = "sniff-strand")]
@@ -1200,7 +1230,188 @@ fn run_sniff(command: &SniffCommand) -> Result<Outcome> {
     match &command.kind {
         SniffKind::Adapters(command) => run_sniff_adapters(command),
         #[cfg(feature = "sniff-strand")]
+        SniffKind::Index(command) => run_sniff_index(command),
+        #[cfg(feature = "sniff-strand")]
         SniffKind::Strand(command) => run_sniff_strand(command),
+    }
+}
+
+#[cfg(feature = "sniff-strand")]
+fn run_sniff_index(command: &SniffIndexCommand) -> Result<Outcome> {
+    let dest = index_destination(
+        &command.sequence,
+        command.output_directory.as_deref(),
+        command.prefix.as_deref(),
+    )?;
+    if !command.sequence.is_file() {
+        return Err(Error::config(format!(
+            "{} is not a file; give a transcriptome FASTA",
+            command.sequence.display()
+        )));
+    }
+    if dest.exists() && !command.force {
+        return Err(Error::OutputExists(dest));
+    }
+    let tmp = reserve_index_tmp(&dest)?;
+    let mut scratch = ScratchDir {
+        path: tmp,
+        keep: false,
+    };
+    eprintln!("building Salmon index → {}", dest.display());
+    crate::sniff::strand::build_index(
+        &command.sequence,
+        &scratch.path,
+        resolve_threads(command.threads),
+    )?;
+    publish_index_dir(&scratch.path, &dest, command.force)?;
+    scratch.keep = true;
+    println!("{}", dest.display());
+    Ok(Outcome::Success)
+}
+
+/// Last path component of the index directory.
+#[cfg(feature = "sniff-strand")]
+fn index_destination(
+    sequence: &Path,
+    output_directory: Option<&Path>,
+    prefix: Option<&str>,
+) -> Result<PathBuf> {
+    let name = match prefix {
+        Some(prefix) => validate_index_prefix(prefix)?.to_string(),
+        None => fasta_index_name(sequence)?,
+    };
+    let parent = match output_directory {
+        Some(directory) => directory.to_path_buf(),
+        None => match sequence.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+            _ => PathBuf::from("."),
+        },
+    };
+    Ok(parent.join(name))
+}
+
+#[cfg(feature = "sniff-strand")]
+fn fasta_index_name(sequence: &Path) -> Result<String> {
+    let name = sequence
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            Error::config(format!(
+                "--sequence {} does not have a usable file name",
+                sequence.display()
+            ))
+        })?;
+    let stem = fasta_stem(name);
+    if stem.is_empty() {
+        return Err(Error::config(format!(
+            "--sequence {} has no file stem to name the index; pass --prefix",
+            sequence.display()
+        )));
+    }
+    Ok(format!("{stem}.index"))
+}
+
+#[cfg(feature = "sniff-strand")]
+fn fasta_stem(name: &str) -> &str {
+    let name = strip_suffix_ci(name, ".gz").unwrap_or(name);
+    strip_suffix_ci(name, ".fasta")
+        .or_else(|| strip_suffix_ci(name, ".fna"))
+        .or_else(|| strip_suffix_ci(name, ".fa"))
+        .unwrap_or(name)
+}
+
+#[cfg(feature = "sniff-strand")]
+fn strip_suffix_ci<'a>(name: &'a str, suffix: &str) -> Option<&'a str> {
+    let end = name.len().checked_sub(suffix.len())?;
+    name.get(end..)
+        .filter(|tail| tail.eq_ignore_ascii_case(suffix))
+        .map(|_| &name[..end])
+}
+
+#[cfg(feature = "sniff-strand")]
+fn validate_index_prefix(prefix: &str) -> Result<&str> {
+    if prefix.is_empty()
+        || prefix == "."
+        || prefix == ".."
+        || prefix.contains('/')
+        || prefix.contains('\\')
+    {
+        return Err(Error::config(
+            "--prefix is a directory name, not a path; use --output-directory to choose the location",
+        ));
+    }
+    Ok(prefix)
+}
+
+#[cfg(feature = "sniff-strand")]
+static INDEX_TMP: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "sniff-strand")]
+fn reserve_index_tmp(dest: &Path) -> Result<PathBuf> {
+    let name = dest
+        .file_name()
+        .ok_or_else(|| Error::config(format!("{} is not a valid output path", dest.display())))?;
+    let parent = match dest.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    std::fs::create_dir_all(parent).map_err(|error| Error::write(parent, error))?;
+    for _ in 0..128 {
+        let sequence = INDEX_TMP.fetch_add(1, Ordering::Relaxed);
+        let tmp = parent.join(format!(
+            ".{}.bqc-tmp-{}-{sequence}",
+            name.to_string_lossy(),
+            std::process::id()
+        ));
+        match std::fs::create_dir(&tmp) {
+            Ok(()) => return Ok(tmp),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(Error::write(&tmp, error)),
+        }
+    }
+    Err(Error::write(
+        dest,
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not reserve a unique temporary index directory",
+        ),
+    ))
+}
+
+#[cfg(feature = "sniff-strand")]
+fn publish_index_dir(tmp: &Path, dest: &Path, force: bool) -> Result<()> {
+    if dest.exists() {
+        if !force {
+            return Err(Error::OutputExists(dest.to_path_buf()));
+        }
+        let remove = if dest.is_dir() {
+            std::fs::remove_dir_all(dest)
+        } else {
+            std::fs::remove_file(dest)
+        };
+        remove.map_err(|error| Error::write(dest, error))?;
+    }
+    match std::fs::rename(tmp, dest) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(Error::OutputExists(dest.to_path_buf()))
+        }
+        Err(error) => Err(Error::write(dest, error)),
+    }
+}
+
+#[cfg(feature = "sniff-strand")]
+struct ScratchDir {
+    path: PathBuf,
+    keep: bool,
+}
+
+#[cfg(feature = "sniff-strand")]
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
     }
 }
 
@@ -1767,5 +1978,49 @@ mod tests {
         let options = command.adapter.options().unwrap();
         assert_eq!(options.min_overlap, Some(10));
         assert!(options.r1.is_none());
+    }
+
+    #[cfg(feature = "sniff-strand")]
+    #[test]
+    fn fasta_stems_strip_known_suffixes() {
+        assert_eq!(fasta_stem("tx.fa"), "tx");
+        assert_eq!(fasta_stem("tx.fa.gz"), "tx");
+        assert_eq!(fasta_stem("tx.fasta"), "tx");
+        assert_eq!(fasta_stem("tx.FASTA.GZ"), "tx");
+        assert_eq!(fasta_stem("tx.fna.gz"), "tx");
+        assert_eq!(fasta_stem("weird.txt"), "weird.txt");
+        assert_eq!(fasta_stem(".fa"), "");
+    }
+
+    #[cfg(feature = "sniff-strand")]
+    #[test]
+    fn index_destination_composes_directory_and_prefix() {
+        assert_eq!(
+            index_destination(Path::new("tx.fa"), None, None).unwrap(),
+            PathBuf::from("./tx.index")
+        );
+        assert_eq!(
+            index_destination(Path::new("/ref/tx.fa.gz"), None, None).unwrap(),
+            PathBuf::from("/ref/tx.index")
+        );
+        assert_eq!(
+            index_destination(Path::new("tx.fa"), Some(Path::new("/idx")), None).unwrap(),
+            PathBuf::from("/idx/tx.index")
+        );
+        assert_eq!(
+            index_destination(Path::new("tx.fa"), None, Some("hg38")).unwrap(),
+            PathBuf::from("./hg38")
+        );
+        assert_eq!(
+            index_destination(Path::new("tx.fa"), Some(Path::new("/idx")), Some("hg38")).unwrap(),
+            PathBuf::from("/idx/hg38")
+        );
+        let err = index_destination(Path::new("tx.fa"), None, Some("a/b")).unwrap_err();
+        assert!(
+            format!("{err}").contains("--prefix is a directory name"),
+            "{err}"
+        );
+        let err = index_destination(Path::new(".fa"), None, None).unwrap_err();
+        assert!(format!("{err}").contains("no file stem"), "{err}");
     }
 }
